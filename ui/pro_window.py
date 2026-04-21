@@ -8,6 +8,8 @@ import os
 from typing import Optional
 import io
 from datetime import datetime
+import json  # 🔥 Required for export functions
+import csv   # 🔥 Required for CSV export
 
 # Print redirector to avoid emoji encoding errors
 class SafeWriter:
@@ -1455,12 +1457,19 @@ class LLDPProfessionalWindow(QWidget):
 
     def export_data(self):
         """Export discovered devices"""
+        # 🔥 检查是否有设备可导出
         if not self.discovered_devices:
-            QMessageBox.warning(self, "警告", "没有可导出的数据")
+            QMessageBox.warning(self, "警告",
+                "没有可导出的设备数据！\n\n"
+                "请先捕获设备后再导出。\n\n"
+                "操作步骤：\n"
+                "1. 选择网络适配器\n"
+                "2. 点击'开始捕获'\n"
+                "3. 插入网线到设备\n"
+                "4. 等待设备自动发现")
             return
 
         from PyQt6.QtWidgets import QFileDialog
-        import json
         from datetime import datetime
 
         # Ask for save location and format
@@ -1489,6 +1498,8 @@ class LLDPProfessionalWindow(QWidget):
 
         except Exception as e:
             QMessageBox.critical(self, "错误", f"导出失败:\n{str(e)}")
+            import traceback
+            traceback.print_exc()
 
     def _export_json(self, file_path: str):
         """Export to JSON format - using ViewModel with PortProfile"""
