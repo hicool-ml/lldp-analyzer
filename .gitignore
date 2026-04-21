@@ -27,11 +27,13 @@ Thumbs.db
 
 # Project logs
 lldp_logs/
-*.txt
 lldp_ui_error.txt
 lldp_analyzer_crash_*.txt
 lldp_analyzer_fatal_*.txt
 lldp_session_*.txt
+
+# Keep requirements.txt for dependency management
+!requirements.txt
 
 # Test files (排除所有测试)
 test_*.py
