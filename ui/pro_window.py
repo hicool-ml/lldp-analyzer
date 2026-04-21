@@ -7,6 +7,7 @@ import sys
 import os
 from typing import Optional
 import io
+from datetime import datetime
 
 # Print redirector to avoid emoji encoding errors
 class SafeWriter:
