@@ -45,10 +45,10 @@ sys.stderr = SafeWriter(getattr(sys, 'stderr', None))
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout,
     QHBoxLayout, QGroupBox, QPushButton, QComboBox,
-    QProgressBar, QMessageBox, QTextEdit
+    QProgressBar, QMessageBox, QTextEdit, QPlainTextEdit
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
-from PyQt6.QtGui import QFont, QPalette
+from PyQt6.QtGui import QFont, QPalette, QTextCharFormat, QColor
 
 # Import from clean architecture
 from lldp import LLDPCaptureListener
@@ -323,7 +323,7 @@ class LLDPProfessionalWindow(QWidget):
         self.log_raw(message)
 
     def log(self, message: str, level: str = "INFO"):
-        """Add log message to the log display"""
+        """Add log message to the log display - Performance optimized with QPlainTextEdit"""
         import datetime
 
         # 🔥 安全检查：debug_checkbox可能还未初始化
@@ -337,26 +337,34 @@ class LLDPProfessionalWindow(QWidget):
         log_entry = f"[{timestamp}] [{level}] {message}"
         self.log_buffer.append(log_entry)
 
-        # Color coding based on level
+        # 🔥 性能优化：使用QTextCharFormat而不是HTML
         color_map = {
             "INFO": "#94a3b8",
-            "DEBUG": "#f59e0b",     # Orange for DEBUG
+            "DEBUG": "#f59e0b",
             "SUCCESS": "#22c55e",
             "WARNING": "#f59e0b",
             "ERROR": "#ef4444"
         }
 
-        color = color_map.get(level, "#94a3b8")
-        formatted_message = f'<span style="color:{color};">[{timestamp}] {message}</span>'
+        color_hex = color_map.get(level, "#94a3b8")
+        formatted_message = f"[{timestamp}] {message}"
 
-        self.log_text.append(formatted_message)
+        # 使用QTextCharFormat进行高性能文本渲染
+        cursor = self.log_text.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
 
-        # Auto-scroll to bottom
+        format = QTextCharFormat()
+        format.setForeground(QColor(color_hex))
+
+        cursor.insertText(formatted_message + "\n", format)
+
+        # 🔥 节流优化：避免频繁滚动导致的UI卡顿
         scrollbar = self.log_text.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        if scrollbar.value() >= scrollbar.maximum() - 10:
+            scrollbar.setValue(scrollbar.maximum())
 
     def log_raw(self, message: str):
-        """Add raw DEBUG output (for detailed packet parsing)"""
+        """Add raw DEBUG output ( for detailed packet parsing) - Performance optimized"""
         # 🔥 安全检查：确保UI组件存在且debug_checkbox已勾选
         if not hasattr(self, 'debug_checkbox') or not self.debug_checkbox.isChecked():
             return
@@ -367,13 +375,21 @@ class LLDPProfessionalWindow(QWidget):
         import datetime
         timestamp = datetime.datetime.now().strftime("%H:%M:%S")
 
-        # Display raw debug output in monospace font
-        formatted_message = f'<span style="color:#64748b; font-family:monospace;">[{timestamp}] {message}</span>'
-        self.log_text.append(formatted_message)
+        # 🔥 性能优化：使用纯文本而不是HTML
+        formatted_message = f"[{timestamp}] {message}"
 
-        # Auto-scroll to bottom
+        cursor = self.log_text.textCursor()
+        cursor.movePosition(cursor.MoveOperation.End)
+
+        format = QTextCharFormat()
+        format.setForeground(QColor("#64748b"))
+
+        cursor.insertText(formatted_message + "\n", format)
+
+        # 🔥 节流优化：限制滚动频率
         scrollbar = self.log_text.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        if scrollbar.value() >= scrollbar.maximum() - 10:
+            scrollbar.setValue(scrollbar.maximum())
 
     def _auto_save_log(self):
         """自动保存日志到文件，防止程序崩溃导致日志丢失"""
@@ -632,13 +648,13 @@ class LLDPProfessionalWindow(QWidget):
         layout.addLayout(header_layout)
 
         # Log text area
-        self.log_text = QTextEdit()
+        self.log_text = QPlainTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setMaximumHeight(150)
-        # 🔥 性能优化：手动限制行数，防止内存溢出
-        self.log_text.document().setMaximumBlockCount(500)
+        # 🔥 性能优化：限制最大行数，防止内存溢出和UI卡顿
+        self.log_text.setMaximumBlockCount(200)  # 降低到200行，提升性能
         self.log_text.setStyleSheet("""
-            QTextEdit {
+            QPlainTextEdit {
                 background:#1e293b;
                 color:#94a3b8;
                 border:1px solid #334155;
@@ -1115,8 +1131,10 @@ class LLDPProfessionalWindow(QWidget):
                 self.sw_mac.setText(str(e)[:50])
             except:
                 pass
-            # Device basic info - Enhanced for both LLDP and CDP
-            if is_cdp:
+
+            # 🔥 MVVM架构：完全依赖ViewModel，消除冗余的协议判断逻辑
+            # view = to_view(device) 已经统一处理了LLDP和CDP的所有显示逻辑
+            # 直接使用view的字段进行UI更新，保持代码简洁和可维护性
                 # CDP device properties
                 cdp_device_id = getattr(device, 'device_id', None)
                 cdp_system_name = getattr(device, 'system_name', None)
@@ -1561,23 +1579,35 @@ class LLDPProfessionalWindow(QWidget):
             for device in self.discovered_devices:
                 view = to_view(device)
 
+                # 🔥 CSV健壮性：清理特殊字符，防止Excel行序错乱
+                def clean_csv_field(text):
+                    """清理CSV字段中的特殊字符"""
+                    if not text:
+                        return ""
+                    text = str(text)
+                    # 替换换行符和制表符
+                    text = text.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
+                    # 移除其他控制字符
+                    text = ''.join(char for char in text if ord(char) >= 32 or char in ' \n\r\t')
+                    return text.strip()
+
                 writer.writerow([
                     # 🔥 NEW: Port Semantic Profile
-                    view.port_profile.role.value,
+                    clean_csv_field(view.port_profile.role.value),
                     f"{view.port_profile.confidence}%",
-                    " / ".join(view.port_profile.reasons),
-                    # Original fields
-                    view.system_name,
-                    view.mac,
-                    view.port_id,
-                    view.port_desc,
-                    view.ip,
-                    view.vlan,
-                    view.macphy,
-                    view.link_agg,
-                    view.mtu,
-                    view.poe,
-                    (safe_get(device, 'system_description') or '—')[:30]
+                    clean_csv_field(" / ".join(view.port_profile.reasons)),
+                    # Original fields with special character cleaning
+                    clean_csv_field(view.system_name),
+                    clean_csv_field(view.mac),
+                    clean_csv_field(view.port_id),
+                    clean_csv_field(view.port_desc),
+                    clean_csv_field(view.ip),
+                    clean_csv_field(view.vlan),
+                    clean_csv_field(view.macphy),
+                    clean_csv_field(view.link_agg),
+                    clean_csv_field(view.mtu),
+                    clean_csv_field(view.poe),
+                    clean_csv_field((safe_get(device, 'system_description') or '—')[:30])
                 ])
 
     def _export_text(self, file_path: str):
