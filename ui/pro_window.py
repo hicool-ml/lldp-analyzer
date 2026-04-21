@@ -52,6 +52,7 @@ from PyQt6.QtGui import QFont, QPalette
 from lldp import LLDPCaptureListener
 from lldp.model import LLDPDevice
 from lldp.view_model import to_view, DeviceView, GREEN_BADGE, BLUE_BADGE, YELLOW_BADGE, PURPLE_BADGE
+from lldp.utils import safe_get
 
 
 class InfoCard(QGroupBox):
