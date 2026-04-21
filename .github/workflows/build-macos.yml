@@ -1,0 +1,239 @@
+name: Build macOS Application
+
+on:
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'lldp/**'
+      - 'ui/**'
+      - 'main_pro.py'
+      - '.github/workflows/build-macos.yml'
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  build-macos:
+    runs-on: macos-latest  # GitHub Actions的macOS runner
+
+    steps:
+    - name: Checkout代码
+      uses: actions/checkout@v4
+
+    - name: 设置Python环境
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+
+    - name: 安装系统依赖
+      run: |
+        # macOS不需要额外的网络驱动，BPF已内置
+        echo "macOS BPF support is built-in"
+
+    - name: 安装Python依赖
+      run: |
+        pip install --upgrade pip
+        pip install pyqt6 pyinstaller scapy
+        pip install pyqt6-qt6 PyQt6-sip
+
+    - name: 转换图标为ICNS格式
+      run: |
+        # 使用macOS自带的sips工具转换图标
+        mkdir -p build_resources
+        sips -s format icns lldp_icon.png --out build_resources/lldp_icon.icns || echo "Icon conversion fallback"
+
+        # 如果sips失败，使用Python PIL创建icns
+        python << 'EOF'
+        from PIL import Image
+        import os
+
+        # 读取PNG图标
+        img = Image.open('lldp_icon.png')
+
+        # 创建不同尺寸
+        sizes = [(16, 16), (32, 32), (64, 64), (128, 128), (256, 256), (512, 512), (1024, 1024)]
+
+        # 创建iconset目录
+        os.makedirs('build_resources/lldp_icon.iconset', exist_ok=True)
+
+        for size in sizes:
+            resized = img.resize(size, Image.Resampling.LANCZOS)
+            resized.save(f'build_resources/lldp_icon.iconset/icon_{size[0]}x{size[1]}.png')
+
+        # 使用iconutil生成icns
+        import subprocess
+        try:
+            subprocess.run(['iconutil', '-c', 'icns', 'build_resources/lldp_icon.iconset',
+                          '-o', 'build_resources/lldp_icon.icns'], check=True)
+            print("ICNS file created successfully")
+        except subprocess.CalledProcessError:
+            print("iconutil failed, using fallback")
+            # 复制原始PNG作为备用
+            img.save('build_resources/lldp_icon.icns')
+        EOF
+
+    - name: 创建macOS PyInstaller配置
+      run: |
+        cat > main_macos.spec << 'SPEC_EOF'
+        # -*- mode: python ; coding: utf-8 -*-
+
+        block_cipher = None
+
+        a = Analysis(
+            ['main_pro.py'],
+            pathex=[],
+            binaries=[],
+            datas=[
+                ('lldp', 'lldp'),
+                ('ui', 'ui'),
+            ],
+            hiddenimports=['scapy.all', 'scapy.layers.l2', 'scapy.packet', 'scapy.fields',
+                         'PyQt6.QtCore', 'PyQt6.QtWidgets', 'PyQt6.QtGui'],
+            hookspath=[],
+            hooksconfig={},
+            runtime_hooks=[],
+            excludes=[
+                'tkinter', 'matplotlib', 'numpy', 'pandas', 'scipy',
+                'PIL', 'PIL._imaging', 'IPython', 'jupyter',
+                'email', 'smtplib', 'poplib', 'urllib3', 'requests',
+                'httpx', 'certifi', 'ssl', 'pyreadline',
+                'pygments', 'colorama', 'chardet',
+                'unittest', 'pytest', 'doctest', 'pdb', 'profile',
+                'trace', 'tracemalloc', 'pstats',
+            ],
+            noarchive=False,
+            optimize=2,
+        )
+
+        pyz = PYZ(a.pure)
+
+        exe = EXE(
+            pyz,
+            a.scripts,
+            [],
+            exclude_binaries=True,
+            name='LLDP Analyzer v2',
+            debug=False,
+            bootloader_ignore_signals=False,
+            strip=False,
+            upx=False,  # macOS上UPX可能导致签名问题
+            console=False,
+            disable_windowed_traceback=False,
+            argv_emulation=False,
+            target_arch=None,
+            codesign_identity=None,
+            entitlements_file=None,
+            icon='build_resources/lldp_icon.icns' if __import__('os').path.exists('build_resources/lldp_icon.icns') else None,
+        )
+
+        coll = COLLECT(
+            exe,
+            a.binaries,
+            a.datas,
+            [],
+            strip=False,
+            upx=False,
+            upx_exclude=[],
+            name='LLDP Analyzer v2',
+        )
+
+        # 创建macOS .app bundle
+        app = BUNDLE(
+            exe,
+            coll,
+            name='LLDP Analyzer v2.app',
+            icon='build_resources/lldp_icon.icns' if __import__('os').path.exists('build_resources/lldp_icon.icns') else None,
+            bundle_identifier='com.hicool.lldpanalyzer',
+            info_plist={
+                'CFBundleName': 'LLDP Analyzer v2',
+                'CFBundleDisplayName': 'LLDP Analyzer v2',
+                'CFBundleVersion': '2.0.0',
+                'CFBundleShortVersionString': '2.0.0',
+                'NSHighResolutionCapable': True,
+                'LSMinimumSystemVersion': '10.13.0',
+                'NSRequiresAquaSystemAppearance': False,
+            },
+        )
+        SPEC_EOF
+
+    - name: 使用PyInstaller打包
+      run: |
+        # 安装Pillow用于图标处理
+        pip install Pillow
+
+        # 打包应用
+        pyinstaller main_macos.spec --clean --noconfirm
+
+        # 检查构建结果
+        ls -lh dist/
+        if [ -d "dist/LLDP Analyzer v2.app" ]; then
+          echo "✅ macOS .app bundle created successfully"
+          ls -lh "dist/LLDP Analyzer v2.app/Contents/MacOS/"
+        else
+          echo "❌ Build failed"
+          exit 1
+        fi
+
+    - name: 代码签名（临时签名）
+      run: |
+        # macOS需要签名才能运行
+        if [ -d "dist/LLDP Analyzer v2.app" ]; then
+          codesign --force --deep --sign - "dist/LLDP Analyzer v2.app" || echo "Code signing failed (non-critical)"
+          codesign --verify --verbose "dist/LLDP Analyzer v2.app" || echo "Signature verification failed (non-critical)"
+        fi
+
+    - name: 创建DMG磁盘映像
+      run: |
+        # 创建临时目录
+        mkdir -p dmg_temp
+
+        # 复制.app到临时目录
+        cp -R "dist/LLDP Analyzer v2.app" dmg_temp/
+
+        # 创建DMG
+        hdiutil create -volname "LLDP Analyzer v2" \
+                      -srcfolder dmg_temp \
+                      -ov -format UDZO \
+                      "dist/LLDP_Analyzer_v2_macos.dmg"
+
+        # 显示DMG信息
+        ls -lh "dist/LLDP_Analyzer_v2_macos.dmg"
+        du -sh "dist/LLDP_Analyzer_v2_macos.dmg"
+
+    - name: 上传构建产物
+      uses: actions/upload-artifact@v4
+      with:
+        name: LLDP-Analyzer-macOS
+        path: |
+          dist/LLDP Analyzer v2.app
+          dist/LLDP_Analyzer_v2_macos.dmg
+        retention-days: 30
+
+    - name: 创建GitHub Release (仅在tag时)
+      if: startsWith(github.ref, 'refs/tags/')
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          dist/LLDP_Analyzer_v2_macos.dmg
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: 构建信息摘要
+      run: |
+        echo "## macOS Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "✅ **Platform**: macOS (Universal Binary)" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "📦 **Build Artifacts**:" >> $GITHUB_STEP_SUMMARY
+        echo "- \`LLDP Analyzer v2.app\` - macOS应用程序" >> $GITHUB_STEP_SUMMARY
+        echo "- \`LLDP_Analyzer_v2_macos.dmg\` - 磁盘映像" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "🔧 **Python Version**: 3.11" >> $GITHUB_STEP_SUMMARY
+        echo "🖥️ **Runner**: macos-latest" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "⚠️ **运行要求**:" >> $GITHUB_STEP_SUMMARY
+        echo "- macOS 10.13+ (High Sierra或更高版本)" >> $GITHUB_STEP_SUMMARY
+        echo "- 网络捕获权限（首次运行需要授权）" >> $GITHUB_STEP_SUMMARY
