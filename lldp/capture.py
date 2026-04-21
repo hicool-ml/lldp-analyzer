@@ -247,13 +247,39 @@ class LLDPCapture:
                     return True
                 return False
 
-            sniff(
-                iface=interface,
-                prn=packet_handler,
-                timeout=duration,
-                store=False,  # 不存储报文，节省内存
-                stop_filter=stop_filter  # 添加停止过滤器
-            )
+            # 🔥 macOS兼容性修复：处理接口名称和权限问题
+            try:
+                # 尝试获取接口对象
+                iface_name = str(interface)
+                print(f"[DEBUG] Using interface: {iface_name}", flush=True)
+
+                # 检查接口是否有效
+                from scapy.all import get_working_ifaces
+                working_ifaces = list(get_working_ifaces())
+                iface_names = [str(iface) for iface in working_ifaces]
+
+                if iface_name not in iface_names:
+                    print(f"[DEBUG] ⚠️ Interface {iface_name} not in working interfaces!", flush=True)
+                    print(f"[DEBUG] Available interfaces: {iface_names}", flush=True)
+
+                    # 尝试使用第一个可用接口
+                    if iface_names:
+                        iface_name = iface_names[0]
+                        print(f"[DEBUG] 🔧 Falling back to interface: {iface_name}", flush=True)
+
+                sniff(
+                    iface=iface_name,
+                    prn=packet_handler,
+                    timeout=duration,
+                    store=False,  # 不存储报文，节省内存
+                    stop_filter=stop_filter  # 添加停止过滤器
+                )
+
+            except Exception as capture_error:
+                print(f"[ERROR] ❌ Capture failed with exception: {capture_error}", flush=True)
+                print(f"[ERROR] This might be a permission or interface issue", flush=True)
+                print(f"[ERROR] Try running with sudo/admin privileges", flush=True)
+                raise
 
             print(f"[DEBUG] Capture completed. Total packets processed: {packet_count}", flush=True)
             if device_found:
