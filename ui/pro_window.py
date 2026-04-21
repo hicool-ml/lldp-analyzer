@@ -45,7 +45,7 @@ sys.stderr = SafeWriter(getattr(sys, 'stderr', None))
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout,
     QHBoxLayout, QGroupBox, QPushButton, QComboBox,
-    QProgressBar, QMessageBox, QPlainTextEdit
+    QProgressBar, QMessageBox, QTextEdit
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QPalette
@@ -632,13 +632,13 @@ class LLDPProfessionalWindow(QWidget):
         layout.addLayout(header_layout)
 
         # Log text area
-        self.log_text = QPlainTextEdit()
+        self.log_text = QTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setMaximumHeight(150)
-        # 🔥 性能优化：限制最大行数，防止内存溢出
-        self.log_text.setMaximumBlockCount(500)
+        # 🔥 性能优化：手动限制行数，防止内存溢出
+        self.log_text.document().setMaximumBlockCount(500)
         self.log_text.setStyleSheet("""
-            QPlainTextEdit {
+            QTextEdit {
                 background:#1e293b;
                 color:#94a3b8;
                 border:1px solid #334155;
