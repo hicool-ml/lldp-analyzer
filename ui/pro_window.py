@@ -455,6 +455,31 @@ class LLDPProfessionalWindow(QWidget):
 
         adapter_row.addWidget(adapter_label)
         adapter_row.addWidget(self.adapter_combo)
+
+        # 🔥 UX优化：添加网卡刷新按钮
+        refresh_btn = QPushButton("🔄")
+        refresh_btn.setFixedWidth(40)
+        refresh_btn.setToolTip("刷新网络适配器列表")
+        refresh_btn.setStyleSheet("""
+            QPushButton {
+                background: #334155;
+                color: #f1f5f9;
+                border: 1px solid #475569;
+                border-radius: 4px;
+                padding: 6px;
+                font-size: 16px;
+            }
+            QPushButton:hover {
+                background: #475569;
+                border: 1px solid #64748b;
+            }
+            QPushButton:pressed {
+                background: #1e293b;
+            }
+        """)
+        refresh_btn.clicked.connect(self.refresh_interfaces)
+        adapter_row.addWidget(refresh_btn)
+
         adapter_row.addStretch()
 
         # Buttons
@@ -1078,6 +1103,11 @@ class LLDPProfessionalWindow(QWidget):
             self.port_role.setText(view.port_role_summary)
             self.port_role.setStyleSheet(view.port_role_badge)
 
+            # 🔥 UX优化：让端口角色可点击查看推断依据
+            self.port_role.setCursor(Qt.CursorShape.PointingHandCursor)
+            # 使用lambda闭包保存当前设备引用
+            self.port_role.mousePressEvent = lambda e, device=device: self._show_port_profile_details(e)
+
             # Log the inference
             self.log(f"端口角色推断: {view.port_profile}", "INFO")
 
@@ -1478,6 +1508,85 @@ class LLDPProfessionalWindow(QWidget):
         except Exception as e:
             # Silently ignore progress update errors to prevent spam
             pass
+
+    def _show_port_profile_details(self, event):
+        """Show port profile inference details dialog"""
+        if not hasattr(self, 'current_device') or not self.current_device:
+            return
+
+        try:
+            from lldp.view_model import to_view
+            view = to_view(self.current_device)
+
+            # 创建推断依据对话框
+            dialog = QMessageBox(self)
+            dialog.setWindowTitle("端口角色推断依据")
+
+            # 🔥 专业UI：根据置信度设置图标
+            confidence = view.port_profile.confidence
+            if confidence >= 90:
+                icon = QMessageBox.Icon.Information
+                title = f"🎯 {view.port_role_summary}"
+            elif confidence >= 70:
+                icon = QMessageBox.Icon.Warning
+                title = f"📊 {view.port_role_summary}"
+            else:
+                icon = QMessageBox.Icon.Question
+                title = f"🔍 {view.port_role_summary}"
+
+            dialog.setIcon(icon)
+            dialog.setText(title)
+
+            # 推断依据详情
+            reasons_text = "推断依据：\n\n"
+            for i, reason in enumerate(view.port_profile.reasons, 1):
+                reasons_text += f"• {reason}\n"
+
+            dialog.setDetailedText(reasons_text)
+            dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
+
+            # 🔥 UX：根据端口角色设置对话框样式
+            role = view.port_profile.role
+            if role.value in ["Core Infrastructure", "Uplink (LAG)"]:
+                dialog.setStyleSheet("""
+                    QMessageBox {
+                        background: #ede9fe;
+                    }
+                    QLabel {
+                        color: #5b21b6;
+                        font-weight: bold;
+                        font-size: 14px;
+                    }
+                """)
+            elif role.value == "Anomaly Detected":
+                dialog.setStyleSheet("""
+                    QMessageBox {
+                        background: #fee2e2;
+                    }
+                    QLabel {
+                        color: #991b1b;
+                        font-weight: bold;
+                        font-size: 14px;
+                    }
+                """)
+            else:
+                dialog.setStyleSheet("""
+                    QMessageBox {
+                        background: #f1f5f9;
+                    }
+                    QLabel {
+                        color: #1e293b;
+                        font-weight: bold;
+                        font-size: 14px;
+                    }
+                """)
+
+            dialog.exec()
+
+        except Exception as e:
+            print(f"[ERROR] Failed to show port profile details: {e}")
+            import traceback
+            traceback.print_exc()
 
     def export_data(self):
         """Export discovered devices"""
