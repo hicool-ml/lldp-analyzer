@@ -4,25 +4,13 @@ __pycache__/
 *$py.class
 *.so
 .Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
 
-# PyInstaller
+# Build artifacts
+build/
+dist/
 *.spec
-*.log
+
+# PyInstaller temporary
 *.pyc
 __pycache__/
 
@@ -37,7 +25,7 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Project specific
+# Project logs
 lldp_logs/
 *.txt
 lldp_ui_error.txt
@@ -45,12 +33,43 @@ lldp_analyzer_crash_*.txt
 lldp_analyzer_fatal_*.txt
 lldp_session_*.txt
 
-# Temporary files
-*.tmp
-*.bak
-*.cache
+# Test files (排除所有测试)
+test_*.py
+*_test.py
+quick_test.py
+real_test.py
+simple_test.py
+minimal_test.py
+complete_test.py
+diagnose.py
 
-# Build artifacts
-build/
-dist/
-/*.exe
+# Debug and portable versions
+build.py
+setup.py
+LLDP_Analyzer_Portable/
+
+# Virtual environment
+clean_env/
+venv/
+env/
+
+# Core module - exclude if not needed
+core/
+
+# Development docs (keep only user-facing docs)
+ARCHITECTURE.md
+COMPLETION_REPORT.md
+EXE_READY.md
+ICON_FIX_SUMMARY.md
+PROFESSIONAL_UI.md
+QUICKSTART.md
+REFACTORING.md
+RELEASE_NOTES_V2.md
+TEST_READY.md
+EXPORT_FIX_COMPLETE.md
+UPGRADE_V2.md
+
+# Keep only essential docs
+!README.md
+!LICENSE
+!SEMANTIC_INFERENCE.md
