@@ -34,43 +34,30 @@ jobs:
       run: |
         pip install --upgrade pip
         pip install -r requirements.txt
-        pip install pyinstaller Pillow
+        pip install pyinstaller
 
     - name: 转换图标为ICNS格式
       run: |
-        # 使用macOS自带的sips工具转换图标
-        mkdir -p build_resources
-        sips -s format icns lldp_icon.png --out build_resources/lldp_icon.icns || echo "Icon conversion fallback"
+        # 使用macOS原生iconutil工具创建图标
+        mkdir -p build_resources/lldp_icon.iconset
 
-        # 如果sips失败，使用Python PIL创建icns
-        python << 'EOF'
-        from PIL import Image
-        import os
+        # 使用sips创建不同尺寸的图标
+        sips -z 16 16 lldp_icon.png --out build_resources/lldp_icon.iconset/icon_16x16.png
+        sips -z 32 32 lldp_icon.png --out build_resources/lldp_icon.iconset/icon_16x16@2x.png
+        sips -z 32 32 lldp_icon.png --out build_resources/lldp_icon.iconset/icon_32x32.png
+        sips -z 64 64 lldp_icon.png --out build_resources/lldp_icon.iconset/icon_32x32@2x.png
+        sips -z 128 128 lldp_icon.png --out build_resources/lldp_icon.iconset/icon_128x128.png
+        sips -z 256 256 lldp_icon.png --out build_resources/lldp_icon.iconset/icon_128x128@2x.png
+        sips -z 256 256 lldp_icon.png --out build_resources/lldp_icon.iconset/icon_256x256.png
+        sips -z 512 512 lldp_icon.png --out build_resources/lldp_icon.iconset/icon_256x256@2x.png
+        sips -z 512 512 lldp_icon.png --out build_resources/lldp_icon.iconset/icon_512x512.png
+        sips -z 1024 1024 lldp_icon.png --out build_resources/lldp_icon.iconset/icon_512x512@2x.png
 
-        # 读取PNG图标
-        img = Image.open('lldp_icon.png')
+        # 使用iconutil生成ICNS文件
+        iconutil -c icns build_resources/lldp_icon.iconset -o build_resources/lldp_icon.icns
 
-        # 创建不同尺寸
-        sizes = [(16, 16), (32, 32), (64, 64), (128, 128), (256, 256), (512, 512), (1024, 1024)]
-
-        # 创建iconset目录
-        os.makedirs('build_resources/lldp_icon.iconset', exist_ok=True)
-
-        for size in sizes:
-            resized = img.resize(size, Image.Resampling.LANCZOS)
-            resized.save(f'build_resources/lldp_icon.iconset/icon_{size[0]}x{size[1]}.png')
-
-        # 使用iconutil生成icns
-        import subprocess
-        try:
-            subprocess.run(['iconutil', '-c', 'icns', 'build_resources/lldp_icon.iconset',
-                          '-o', 'build_resources/lldp_icon.icns'], check=True)
-            print("ICNS file created successfully")
-        except subprocess.CalledProcessError:
-            print("iconutil failed, using fallback")
-            # 复制原始PNG作为备用
-            img.save('build_resources/lldp_icon.icns')
-        EOF
+        echo "✅ ICNS file created successfully"
+        ls -lh build_resources/lldp_icon.icns
 
     - name: 创建macOS PyInstaller配置
       run: |
@@ -158,9 +145,6 @@ jobs:
 
     - name: 使用PyInstaller打包
       run: |
-        # 安装Pillow用于图标处理
-        pip install Pillow
-
         # 打包应用
         pyinstaller main_macos.spec --clean --noconfirm
 
