@@ -11,12 +11,17 @@ from .utils import safe_get
 
 
 class PortRole(Enum):
-    """Port role types"""
+    """Port role types - Enhanced with professional network inference"""
     ACCESS = "Access"                    # 普通接入口
     TERMINAL = "Terminal"                # 终端设备（AP/Phone/PC）
     TRUNK = "Trunk"                      # 干道口
     UPLINK = "Uplink"                    # 上联口
     UPLINK_LAG = "Uplink (LAG)"          # 聚合上联
+    CORE_INFRA = "Core Infrastructure"    # 🔥 NEW: 核心基础设施
+    WIRELESS_AP = "Wireless AP"          # 🔥 NEW: 无线接入点
+    VOIP_PHONE = "VoIP Phone"            # 🔥 NEW: IP电话
+    HYPERVISOR = "Hypervisor"            # 🔥 NEW: 虚拟化主机
+    ANOMALY = "Anomaly Detected"         # 🔥 NEW: 异常检测
     UNKNOWN = "Unknown"                  # 未知
 
 
@@ -254,6 +259,180 @@ def infer_port_profile(device) -> PortProfile:
             suggested_color="#a855f7"  # Light purple for Uplink
         )
 
+    # ========== 🔥 NEW Rule 6: Core Infrastructure Detection ==========
+    # Key indicators:
+    # - Bridge + Router capabilities
+    # - Trunk/Port-channel in description
+    # - High speed (10G+)
+    score = 0
+    reasons = []
+
+    if capabilities:
+        if safe_get(capabilities, 'bridge') and safe_get(capabilities, 'router'):
+            reasons.append("具备桥接+路由能力（核心设备特征）")
+            score += 4
+
+    # Check system description for infrastructure keywords
+    system_desc = safe_get(device, 'system_description', '').lower()
+    port_desc = safe_get(device, 'port_description', '').lower()
+
+    infra_keywords = ['trunk', 'port-channel', 'eth-channel', 'bundle', 'ten', 'forty', 'hundred']
+    if any(kw in system_desc or kw in port_desc for kw in infra_keywords):
+        reasons.append("端口描述包含基础设施关键词")
+        score += 3
+
+    if macphy and macphy.speed:
+        speed = macphy.speed
+        if '10G' in speed or '25G' in speed or '40G' in speed or '100G' in speed:
+            reasons.append(f"高速率({speed})符合核心设备特征")
+            score += 2
+
+    if score >= 6:
+        role = PortRole.CORE_INFRA
+        return PortProfile(
+            role=role,
+            confidence=min(98, 80 + score * 2),
+            reasons=reasons,
+            suggested_color="#7c3aed"  # Deep purple for Core Infrastructure
+        )
+
+    # ========== 🔥 NEW Rule 7: VoIP Phone Detection ==========
+    # Key indicators:
+    # - Bridge capability only (phones have small switches)
+    # - PoE powered
+    # - System name/description contains phone keywords
+    score = 0
+    reasons = []
+
+    if capabilities and safe_get(capabilities, 'bridge') and not safe_get(capabilities, 'router'):
+        reasons.append("仅桥接能力（电话特征）")
+        score += 2
+
+    if poe and safe_get(poe, 'supported'):
+        power_type = safe_get(poe, 'power_type', '').lower()
+        if 'pd' in power_type:  # Power Device
+            reasons.append("PoE受电设备（IP电话通常为PD）")
+            score += 3
+
+    # Check device name for phone keywords
+    system_name = safe_get(device, 'system_name', '').lower()
+    phone_keywords = ['phone', '7960', '7970', '7841', '8851', 'avaya', 'cisco ip phone']
+    if any(kw in system_name for kw in phone_keywords):
+        reasons.append("系统名称包含IP电话关键词")
+        score += 4
+
+    # Check LLDP-MED for network connectivity device class
+    lldp_med_caps = safe_get(device, 'lldp_med_capabilities')
+    if lldp_med_caps:
+        device_class = safe_get(lldp_med_caps, 'device_class', '')
+        if 'network connectivity' in str(device_class).lower():
+            reasons.append("LLDP-MED标识为网络连接设备")
+            score += 2
+
+    if score >= 5:
+        role = PortRole.VOIP_PHONE
+        return PortProfile(
+            role=role,
+            confidence=min(95, 75 + score * 2),
+            reasons=reasons,
+            suggested_color="#fbbf24"  # Yellow for VoIP phones
+        )
+
+    # ========== 🔥 NEW Rule 8: Wireless AP Detection ==========
+    # Key indicators:
+    # - WLAN Access Point capability
+    # - System name contains AP keywords
+    score = 0
+    reasons = []
+
+    if capabilities:
+        if 'wlan access point' in str(safe_get(capabilities, 'get_all_capabilities', [])).lower():
+            reasons.append("具备WLAN接入点能力")
+            score += 4
+
+    # Check for AP keywords in system name
+    ap_keywords = ['ap', 'aruba', 'ubiquiti', 'ruckus', 'aeroscout', 'meraki']
+    if any(kw in system_name for kw in ap_keywords):
+        reasons.append("系统名称包含无线AP关键词")
+        score += 3
+
+    if poe and safe_get(poe, 'supported'):
+        reasons.append("支持PoE供电（AP常见配置）")
+        score += 1
+
+    if score >= 4:
+        role = PortRole.WIRELESS_AP
+        return PortProfile(
+            role=role,
+            confidence=min(92, 75 + score * 2),
+            reasons=reasons,
+            suggested_color="#10b981"  # Green for Wireless AP
+        )
+
+    # ========== 🔥 NEW Rule 9: Hypervisor Detection ==========
+    # Key indicators:
+    # - Chassis ID MAC belongs to VMware/Microsoft/Xen
+    # - System name contains ESXi/vswitch keywords
+    score = 0
+    reasons = []
+
+    # Check chassis ID MAC OUI for virtualization vendors
+    chassis_id = safe_get(device, 'chassis_id')
+    if chassis_id:
+        mac_value = str(safe_get(chassis_id, 'value', ''))
+
+        # VMware OUI: 00:05:69, 00:0c:29, 00:50:56
+        if any(oui in mac_value for oui in ['00:05:69', '00:0c:29', '00:50:56']):
+            reasons.append("MAC地址属于VMware虚拟化平台")
+            score += 4
+
+        # Microsoft OUI: 00:15:5d
+        elif '00:15:5d' in mac_value:
+            reasons.append("MAC地址属于Microsoft Hyper-V")
+            score += 4
+
+    # Check system name for hypervisor keywords
+    hypervisor_keywords = ['esxi', 'vswitch', 'hyperv', 'xen', 'kvm']
+    if any(kw in system_name for kw in hypervisor_keywords):
+        reasons.append("系统名称包含虚拟化平台关键词")
+        score += 3
+
+    if score >= 4:
+        role = PortRole.HYPERVISOR
+        return PortProfile(
+            role=role,
+            confidence=min(90, 75 + score * 2),
+            reasons=reasons,
+            suggested_color="#0891b2"  # Cyan for Hypervisor
+        )
+
+    # ========== 🔥 NEW Rule 10: Anomaly Detection ==========
+    # Detect potential network issues
+    score = 0
+    reasons = []
+
+    # Check for half-duplex (anomaly)
+    if macphy:
+        duplex = safe_get(macphy, 'duplex', '').lower()
+        if 'half' in duplex:
+            reasons.append("⚠️ 检测到半双工模式（性能瓶颈）")
+            score += 5
+
+    # Check for missing management address (unmanaged device)
+    mgmt_ip = safe_get(device, 'management_ip')
+    if not mgmt or mgmt == '未提供':
+        reasons.append("⚠️ 缺少管理地址（非受管设备）")
+        score += 2
+
+    if score >= 3:
+        role = PortRole.ANOMALY
+        return PortProfile(
+            role=role,
+            confidence=min(85, 70 + score * 2),
+            reasons=reasons,
+            suggested_color="#ef4444"  # Red for anomalies
+        )
+
     # ========== Default: Unknown ==========
     return PortProfile(
         role=PortRole.UNKNOWN,
@@ -271,6 +450,12 @@ def get_port_role_badge(profile: PortProfile) -> str:
         PortRole.TRUNK: "color:#3b82f6;font-weight:600;background:#dbeafe;padding:4px;border-radius:4px;",
         PortRole.UPLINK: "color:#a855f7;font-weight:600;background:#f3e8ff;padding:4px;border-radius:4px;",
         PortRole.UPLINK_LAG: "color:#8b5cf6;font-weight:700;background:#ede9fe;padding:4px;border-radius:4px;",
+        # 🔥 NEW: Enhanced role styles
+        PortRole.CORE_INFRA: "color:#7c3aed;font-weight:700;background:#ddd6fe;padding:4px;border-radius:4px;border:1px solid #7c3aed;",
+        PortRole.WIRELESS_AP: "color:#10b981;font-weight:600;background:#d1fae5;padding:4px;border-radius:4px;",
+        PortRole.VOIP_PHONE: "color:#fbbf24;font-weight:600;background:#fef3c7;padding:4px;border-radius:4px;",
+        PortRole.HYPERVISOR: "color:#0891b2;font-weight:600;background:#cffafe;padding:4px;border-radius:4px;",
+        PortRole.ANOMALY: "color:#ef4444;font-weight:700;background:#fee2e2;padding:4px;border-radius:4px;border:1px solid #ef4444;",
         PortRole.UNKNOWN: "color:#94a3b8;font-weight:600;background:#f1f5f9;padding:4px;border-radius:4px;",
     }
     return color_map.get(profile.role, color_map[PortRole.UNKNOWN])

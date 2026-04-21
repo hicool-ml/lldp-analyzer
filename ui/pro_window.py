@@ -45,7 +45,7 @@ sys.stderr = SafeWriter(getattr(sys, 'stderr', None))
 from PyQt6.QtWidgets import (
     QApplication, QWidget, QLabel, QVBoxLayout,
     QHBoxLayout, QGroupBox, QPushButton, QComboBox,
-    QProgressBar, QMessageBox, QTextEdit
+    QProgressBar, QMessageBox, QPlainTextEdit
 )
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QPalette
@@ -632,11 +632,13 @@ class LLDPProfessionalWindow(QWidget):
         layout.addLayout(header_layout)
 
         # Log text area
-        self.log_text = QTextEdit()
+        self.log_text = QPlainTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setMaximumHeight(150)
+        # 🔥 性能优化：限制最大行数，防止内存溢出
+        self.log_text.setMaximumBlockCount(500)
         self.log_text.setStyleSheet("""
-            QTextEdit {
+            QPlainTextEdit {
                 background:#1e293b;
                 color:#94a3b8;
                 border:1px solid #334155;
@@ -798,6 +800,10 @@ class LLDPProfessionalWindow(QWidget):
 
     def start_capture(self):
         """Start LLDP capture"""
+        # 🔥 UX优化：立即禁用按钮，防止双击
+        self.start_btn.setEnabled(False)
+        self.start_btn.repaint()  # 强制重绘，确保UI立即更新
+
         print(f"[DEBUG] ===== start_capture called =====", flush=True)
 
         if not hasattr(self, 'interfaces') or not self.interfaces:
@@ -1540,7 +1546,8 @@ class LLDPProfessionalWindow(QWidget):
         """Export to CSV format - using ViewModel with PortProfile"""
         import csv
 
-        with open(file_path, 'w', encoding='utf-8', newline='') as f:
+        # 🔥 修复编码：使用utf-8-sig确保Windows Excel正确识别UTF-8
+        with open(file_path, 'w', encoding='utf-8-sig', newline='') as f:
             writer = csv.writer(f)
 
             # 🔥 NEW: Header with port role

@@ -267,13 +267,37 @@ class LLDPCapture:
                         iface_name = iface_names[0]
                         print(f"[DEBUG] 🔧 Falling back to interface: {iface_name}", flush=True)
 
-                sniff(
+                # 🔥 性能优化：使用AsyncSniffer替代sniff，解决假死问题
+                from scapy.all import AsyncSniffer
+
+                # 创建BPF过滤器：内核层过滤，减少CPU开销
+                bpf_filter = "ether proto 0x88cc or ether host 01:00:0c:cc:cc:cc"
+
+                # 创建异步嗅探器
+                sniffer = AsyncSniffer(
                     iface=iface_name,
+                    filter=bpf_filter,  # 🔥 包采样计数器：BPF内核过滤
                     prn=packet_handler,
-                    timeout=duration,
                     store=False,  # 不存储报文，节省内存
-                    stop_filter=stop_filter  # 添加停止过滤器
+                    started_callback=lambda: print(f"[DEBUG] ✅ AsyncSniffer started on {iface_name}", flush=True)
                 )
+
+                # 启动异步嗅探
+                sniffer.start()
+
+                # 等待捕获完成或设备发现
+                import time as time_module
+                start_time = time_module.time()
+
+                while time_module.time() - start_time < duration:
+                    if device_found or not self.is_capturing:
+                        print(f"[DEBUG] 🛑 Stop condition triggered, stopping AsyncSniffer...", flush=True)
+                        break
+                    time_module.sleep(0.1)  # 100ms轮询间隔
+
+                # 🔥 优雅停止：不会阻塞UI线程
+                sniffer.stop()
+                print(f"[DEBUG] ✅ AsyncSniffer stopped gracefully", flush=True)
 
             except Exception as capture_error:
                 print(f"[ERROR] ❌ Capture failed with exception: {capture_error}", flush=True)
