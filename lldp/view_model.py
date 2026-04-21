@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .utils import safe_get
-from .port_profile import PortProfile, infer_port_profile, get_port_role_badge, format_port_profile_summary
+from .port_profile import PortProfile, infer_port_profile, get_port_role_badge, format_port_profile_summary, infer_device_type
 
 
 @dataclass
@@ -21,6 +21,7 @@ class DeviceView:
     port_profile: PortProfile
     port_role_badge: str
     port_role_summary: str
+    device_type: str  # 🔥 NEW: 设备类型
 
     # Device Info
     system_name: str
@@ -60,8 +61,42 @@ RED_BADGE = "color:#ef4444; font-weight:600; background:#fee2e2; padding:4px; bo
 EMERALD_BADGE = "color:#10b981; font-weight:700; background:#d1fae5; padding:4px; border-radius:4px;"
 
 
-def format_vlan(device) -> str:
-    """Format VLAN information - pure function"""
+def format_vlan(device, profile=None) -> str:
+    """🔥 ENHANCED: Format VLAN information with semantic awareness"""
+    # 🔥 NEW: 如果有profile，使用语义推断结果
+    if profile:
+        port_vlan = safe_get(device, 'port_vlan')
+        protocol_vlan = safe_get(device, 'protocol_vlan_id')
+
+        # 🔥 语义增强：根据端口角色调整VLAN显示
+        if profile.role == PortRole.TRUNK:
+            # Trunk端口强调Tagged/Untagged语义
+            if protocol_vlan:
+                return f"Trunk (Native + {protocol_vlan} Tagged)"
+            elif port_vlan:
+                return f"Trunk ({port_vlan.vlan_id} Native)"
+            else:
+                return "Trunk (无VLAN信息)"
+
+        elif profile.role == PortRole.ACCESS:
+            # Access端口强调Untagged语义
+            if port_vlan:
+                tagged = safe_get(port_vlan, 'tagged')
+                tagged_text = "Tagged" if tagged else "Untagged"
+                return f"Access ({port_vlan.vlan_id} {tagged_text})"
+            else:
+                return "Access (未分配VLAN)"
+
+        elif profile.role == PortRole.UPLINK or profile.role == PortRole.UPLINK_LAG:
+            # Uplink强调路由VLAN
+            if protocol_vlan:
+                return f"Uplink (Native + {protocol_vlan} Tagged)"
+            elif port_vlan:
+                return f"Uplink ({port_vlan.vlan_id} Native)"
+            else:
+                return "Uplink (无VLAN信息)"
+
+    # Original logic (fallback)
     # Check for CDP Native VLAN
     native_vlan = safe_get(device, 'native_vlan')
     if native_vlan:
@@ -216,10 +251,18 @@ def format_capabilities(device) -> str:
 def to_view(device) -> DeviceView:
     """Convert raw LLDPDevice to clean DeviceView for UI/export"""
 
-    # 🔥 KEY: Port Semantic Inference (协议语义推断)
+    # 🔥 KEY: Port Semantic Inference (协议语义推断) - Enhanced
     port_profile = infer_port_profile(device)
     port_role_badge = get_port_role_badge(port_profile)
     port_role_summary = format_port_profile_summary(port_profile)
+
+    # 🔥 NEW: Device type inference (设备类型推断)
+    device_type = infer_device_type(device)
+
+    # 🔥 ENHANCED: 让语义推断影响port_profile
+    if port_profile.device_type == DeviceType.UNKNOWN:
+        # 如果port_profile没有推断出设备类型，使用专门的device_type推断
+        port_profile.device_type = device_type
 
     # Detect protocol
     """Convert raw LLDPDevice to clean DeviceView for UI/export"""
@@ -303,7 +346,8 @@ def to_view(device) -> DeviceView:
         port_desc = safe_get(device, 'port_description') or "未知"
 
     # VLAN
-    vlan = format_vlan(device)
+    # 🔥 NEW: 让format_vlan依赖语义推断结果
+    vlan = format_vlan(device, port_profile)
     vlan_style = get_vlan_style(device)
 
     # Protocol VLAN
@@ -333,6 +377,7 @@ def to_view(device) -> DeviceView:
         port_profile=port_profile,
         port_role_badge=port_role_badge,
         port_role_summary=port_role_summary,
+        device_type=device_type.value,  # 🔥 NEW: 设备类型
         # Device Info
         system_name=system_name,
         device_model=device_model,

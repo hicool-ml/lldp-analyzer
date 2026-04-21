@@ -17,21 +17,34 @@ class PortRole(Enum):
     TRUNK = "Trunk"                      # 干道口
     UPLINK = "Uplink"                    # 上联口
     UPLINK_LAG = "Uplink (LAG)"          # 聚合上联
-    CORE_INFRA = "Core Infrastructure"    # 🔥 NEW: 核心基础设施
-    WIRELESS_AP = "Wireless AP"          # 🔥 NEW: 无线接入点
-    VOIP_PHONE = "VoIP Phone"            # 🔥 NEW: IP电话
-    HYPERVISOR = "Hypervisor"            # 🔥 NEW: 虚拟化主机
-    ANOMALY = "Anomaly Detected"         # 🔥 NEW: 异常检测
+    CORE_INFRA = "Core Infrastructure"    # 核心基础设施
+    WIRELESS_AP = "Wireless AP"          # 无线接入点
+    VOIP_PHONE = "VoIP Phone"            # IP电话
+    HYPERVISOR = "Hypervisor"            # 虚拟化主机
+    ANOMALY = "Anomaly Detected"         # 异常检测
+    UNKNOWN = "Unknown"                  # 未知
+
+
+class DeviceType(Enum):
+    """Device type inference - 🔥 NEW: Critical for semantic engine"""
+    SWITCH = "Switch"                    # 交换机
+    ROUTER = "Router"                    # 路由器
+    WIRELESS_AP = "Wireless AP"          # 无线接入点
+    VOIP_PHONE = "VoIP Phone"            # IP电话
+    HYPERVERVISOR = "Hypervisor"         # 虚拟化主机
+    SERVER = "Server"                    # 服务器
+    TERMINAL = "Terminal"                # 终端（PC/打印机等）
     UNKNOWN = "Unknown"                  # 未知
 
 
 @dataclass
 class PortProfile:
     """
-    Port Semantic Profile
+    Port Semantic Profile - 🔥 ENHANCED: True semantic inference engine
     Infers the role and purpose of a network port from LLDP/CDP TLV combinations
     """
-    role: PortRole                      # 推断的角色
+    role: PortRole                      # 推断的端口角色
+    device_type: DeviceType              # 🔥 NEW: 推断的设备类型
     confidence: int                     # 置信度 (0-100)
     reasons: List[str]                  # 推断依据
     suggested_color: str                # 建议的显示颜色
@@ -46,7 +59,8 @@ class PortProfile:
             level = "低置信度"
 
         reasons_str = " / ".join(self.reasons)
-        return f"{self.role.value} ({level}, {self.confidence}%) - {reasons_str}"
+        # 🔥 NEW: Show both port role and device type
+        return f"{self.role.value} / {self.device_type.value} ({level}, {self.confidence}%) - {reasons_str}"
 
 
 def infer_port_profile(device) -> PortProfile:
@@ -459,6 +473,101 @@ def get_port_role_badge(profile: PortProfile) -> str:
         PortRole.UNKNOWN: "color:#94a3b8;font-weight:600;background:#f1f5f9;padding:4px;border-radius:4px;",
     }
     return color_map.get(profile.role, color_map[PortRole.UNKNOWN])
+
+
+def infer_device_type(device) -> DeviceType:
+    """
+    🔥 NEW: Device type inference from TLV combinations
+
+    This is the critical missing piece for true semantic inference.
+    Analyzes Capabilities, PoE, MAC/PHY to determine device type.
+
+    Args:
+        device: LLDPDevice or CDP device object
+
+    Returns:
+        DeviceType with confidence
+    """
+    capabilities = safe_get(device, 'capabilities')
+    poe = safe_get(device, 'poe')
+    macphy = safe_get(device, 'macphy_config')
+    system_name = safe_get(device, 'system_name', '').lower()
+
+    score = 0
+    reasons = []
+    device_type = DeviceType.UNKNOWN
+
+    # 🔥 CRITICAL: Capabilities组合判断
+    if capabilities:
+        all_caps = capabilities.get_all_capabilities()
+
+        # Bridge + Router = L3设备
+        if safe_get(capabilities, 'router') and safe_get(capabilities, 'bridge'):
+            reasons.append("具备路由+桥接能力（三层设备）")
+            score += 8
+            device_type = DeviceType.ROUTER
+
+        # Bridge only = L2设备
+        elif safe_get(capabilities, 'bridge'):
+            device_type = DeviceType.SWITCH
+            reasons.append("具备桥接能力（交换机特征）")
+            score += 4
+
+        # WLAN Access Point
+        if 'wlan access point' in [cap.lower() for cap in all_caps]:
+            device_type = DeviceType.WIRELESS_AP
+            reasons.append("具备WLAN接入点能力")
+            score += 6
+
+    # 🔥 PoE + MAC/PHY组合判断
+    if poe and safe_get(poe, 'supported'):
+        power_source = safe_get(poe, 'power_source', '')
+        power_type = safe_get(poe, 'power_type', '')
+
+        # PD = 受电设备，判断具体类型
+        if 'PD' in power_source:
+            # IP电话判断
+            if 'phone' in str(power_type).lower() or '7960' in str(power_type).lower():
+                device_type = DeviceType.VOIP_PHONE
+                reasons.append("PoE受电 + 电话类型特征")
+                score += 6
+            # AP判断
+            elif device_type != DeviceType.WIRELESS_AP:
+                # 如果没有WLAN能力，可能是AP
+                if not capabilities or 'wlan' not in str(capabilities.get_all_capabilities()).lower():
+                    device_type = DeviceType.WIRELESS_AP
+                    reasons.append("PoE受电 + 无WLAN能力（可能是AP）")
+                    score += 4
+                else:
+                    device_type = DeviceType.TERMINAL
+                    reasons.append("PoE受电终端设备")
+                    score += 3
+
+    # 🔥 System Name模式匹配
+    if 'esxi' in system_name or 'hyperv' in system_name:
+        device_type = DeviceType.HYPERVISOR
+        reasons.append("系统名称包含虚拟化平台关键词")
+        score += 5
+    elif 'ap' in system_name or 'aruba' in system_name or 'ubiquiti' in system_name:
+        if device_type == DeviceType.UNKNOWN:
+            device_type = DeviceType.WIRELESS_AP
+            reasons.append("系统名称包含无线AP关键词")
+            score += 4
+
+    # 🔥 MAC/PHY速度判断
+    if macphy and macphy.speed:
+        speed = macphy.speed
+        if '10G' in speed or '25G' in speed:
+            if device_type in [DeviceType.SWITCH, DeviceType.UNKNOWN]:
+                device_type = DeviceType.ROUTER
+                reasons.append(f"高速率({speed}) - 核心设备特征")
+                score += 4
+
+    # 最终确定设备类型
+    if score >= 4:
+        return device_type
+    else:
+        return DeviceType.UNKNOWN
 
 
 def format_port_profile_summary(profile: PortProfile) -> str:

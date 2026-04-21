@@ -1103,13 +1103,25 @@ class LLDPProfessionalWindow(QWidget):
             self.port_role.setText(view.port_role_summary)
             self.port_role.setStyleSheet(view.port_role_badge)
 
-            # 🔥 UX优化：让端口角色可点击查看推断依据
+            # 🔥 NEW: 显示推断依据（让推理透明化）
+            if len(view.port_profile.reasons) <= 2:
+                # 推断依据较少时，直接显示
+                reasons_short = " | ".join(view.port_profile.reasons[:2])
+                self.port_role.setToolTip(f"推断依据:\n{chr(10).join(f'• {r}' for r in view.port_profile.reasons)}")
+            else:
+                # 推断依据较多时，显示前2个+省略号
+                reasons_short = " | ".join(view.port_profile.reasons[:2]) + " ..."
+                self.port_role.setToolTip(f"推断依据:\n{chr(10).join(f'• {r}' for r in view.port_profile.reasons)}")
+
+            # 🔥 让端口角色可点击查看推断依据
             self.port_role.setCursor(Qt.CursorShape.PointingHandCursor)
             # 使用lambda闭包保存当前设备引用
             self.port_role.mousePressEvent = lambda e, device=device: self._show_port_profile_details(e)
 
             # Log the inference
             self.log(f"端口角色推断: {view.port_profile}", "INFO")
+            # 🔥 NEW: 显示设备类型推断
+            self.log(f"设备类型推断: {view.device_type} - 推断依据: {'; '.join(view.port_profile.reasons[:3])}", "INFO")
 
             # Protocol
             self.protocol.setText(view.protocol)
@@ -1510,7 +1522,7 @@ class LLDPProfessionalWindow(QWidget):
             pass
 
     def _show_port_profile_details(self, event):
-        """Show port profile inference details dialog"""
+        """🔥 ENHANCED: Show port profile and device type inference details dialog"""
         if not hasattr(self, 'current_device') or not self.current_device:
             return
 
@@ -1518,34 +1530,40 @@ class LLDPProfessionalWindow(QWidget):
             from lldp.view_model import to_view
             view = to_view(self.current_device)
 
-            # 创建推断依据对话框
+            # 🔥 ENHANCED: 创建专业推断依据对话框
             dialog = QMessageBox(self)
-            dialog.setWindowTitle("端口角色推断依据")
+            dialog.setWindowTitle("语义推断详情 - LLDP Analyzer v2")
 
-            # 🔥 专业UI：根据置信度设置图标
+            # 🔥 专业UI：根据置信度和设备类型设置图标
             confidence = view.port_profile.confidence
+            device_type = view.device_type
+
+            # 🔥 NEW: 组合显示端口角色和设备类型
             if confidence >= 90:
                 icon = QMessageBox.Icon.Information
-                title = f"🎯 {view.port_role_summary}"
+                title = f"🎯 {view.port_role_summary} / {device_type}"
             elif confidence >= 70:
                 icon = QMessageBox.Icon.Warning
-                title = f"📊 {view.port_role_summary}"
+                title = f"📊 {view.port_role_summary} / {device_type}"
             else:
                 icon = QMessageBox.Icon.Question
-                title = f"🔍 {view.port_role_summary}"
+                title = f"🔍 {view.port_role_summary} / {device_type}"
 
             dialog.setIcon(icon)
             dialog.setText(title)
 
-            # 推断依据详情
-            reasons_text = "推断依据：\n\n"
+            # 🔥 ENHANCED: 显示完整的推断信息
+            details = f"🔍 端口角色: {view.port_profile.role.value}\n"
+            details += f"🏢️ 设备类型: {device_type}\n"
+            details += f"📊 置信度: {view.port_profile.confidence}%\n\n"
+            details += "📋 推断依据：\n"
             for i, reason in enumerate(view.port_profile.reasons, 1):
-                reasons_text += f"• {reason}\n"
+                details += f"{i}. {reason}\n"
 
-            dialog.setDetailedText(reasons_text)
+            dialog.setDetailedText(details)
             dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
 
-            # 🔥 UX：根据端口角色设置对话框样式
+            # 🔥 专业UI：根据设备类型和置信度设置对话框样式
             role = view.port_profile.role
             if role.value in ["Core Infrastructure", "Uplink (LAG)"]:
                 dialog.setStyleSheet("""
@@ -1556,6 +1574,12 @@ class LLDPProfessionalWindow(QWidget):
                         color: #5b21b6;
                         font-weight: bold;
                         font-size: 14px;
+                    }
+                    QPushButton {
+                        background: #8b5cf6;
+                        color: white;
+                        border-radius: 4px;
+                        padding: 6px 12px;
                     }
                 """)
             elif role.value == "Anomaly Detected":
@@ -1568,6 +1592,29 @@ class LLDPProfessionalWindow(QWidget):
                         font-weight: bold;
                         font-size: 14px;
                     }
+                    QPushButton {
+                        background: #ef4444;
+                        color: white;
+                        border-radius: 4px;
+                        padding: 6px 12px;
+                    }
+                """)
+            elif device_type in ["Wireless AP", "VoIP Phone"]:
+                dialog.setStyleSheet("""
+                    QMessageBox {
+                        background: #d1fae5;
+                    }
+                    QLabel {
+                        color: #065f46;
+                        font-weight: bold;
+                        font-size: 14px;
+                    }
+                    QPushButton {
+                        background: #10b981;
+                        color: white;
+                        border-radius: 4px;
+                        padding: 6px 12px;
+                    }
                 """)
             else:
                 dialog.setStyleSheet("""
@@ -1578,6 +1625,12 @@ class LLDPProfessionalWindow(QWidget):
                         color: #1e293b;
                         font-weight: bold;
                         font-size: 14px;
+                    }
+                    QPushButton {
+                        background: #64748b;
+                        color: white;
+                        border-radius: 4px;
+                        padding: 6px 12px;
                     }
                 """)
 
@@ -1677,14 +1730,13 @@ class LLDPProfessionalWindow(QWidget):
         with open(file_path, 'w', encoding='utf-8-sig', newline='') as f:
             writer = csv.writer(f)
 
-            # 🔥 NEW: Header with port role
+            # 🔥 语义导出：Header包含语义信息而非原始字段
             writer.writerow([
-                '端口角色', '置信度', '推断依据',
-                '系统名称', '设备MAC', '端口ID', '端口描述',
-                '管理IP', 'VLAN', '速率/双工', '链路聚合', '最大帧长', 'PoE', '系统描述'
+                '端口角色', '设备类型', '置信度', '推断依据',
+                '系统名称', '管理IP', '端口语义', '设备语义'
             ])
 
-            # Data rows - using ViewModel
+            # Data rows - using ViewModel with semantic export
             for device in self.discovered_devices:
                 view = to_view(device)
 
@@ -1700,23 +1752,30 @@ class LLDPProfessionalWindow(QWidget):
                     text = ''.join(char for char in text if ord(char) >= 32 or char in ' \n\r\t')
                     return text.strip()
 
+                # 🔥 语义导出：根据设备类型和端口角色生成语义描述
+                device_semantic = f"{view.device_type} - {view.port_profile.role.value}"
+
+                # 🔥 NEW: 生成端口语义描述
+                if view.port_profile.role.value == "Trunk":
+                    port_semantic = "Trunk (承载多VLAN)"
+                elif view.port_profile.role.value == "Access":
+                    port_semantic = "Access (单一VLAN接入)"
+                elif view.port_profile.role.value in ["Uplink", "Uplink (LAG)"]:
+                    port_semantic = "上联口 (核心层连接)"
+                else:
+                    port_semantic = view.port_profile.role.value
+
                 writer.writerow([
-                    # 🔥 NEW: Port Semantic Profile
+                    # 🔥 语义导出：端口角色 + 设备类型 + 推断依据
                     clean_csv_field(view.port_profile.role.value),
+                    clean_csv_field(view.device_type),
                     f"{view.port_profile.confidence}%",
                     clean_csv_field(" / ".join(view.port_profile.reasons)),
-                    # Original fields with special character cleaning
+                    # 关键字段（其他可从推断依据获取）
                     clean_csv_field(view.system_name),
-                    clean_csv_field(view.mac),
-                    clean_csv_field(view.port_id),
-                    clean_csv_field(view.port_desc),
                     clean_csv_field(view.ip),
-                    clean_csv_field(view.vlan),
-                    clean_csv_field(view.macphy),
-                    clean_csv_field(view.link_agg),
-                    clean_csv_field(view.mtu),
-                    clean_csv_field(view.poe),
-                    clean_csv_field((safe_get(device, 'system_description') or '—')[:30])
+                    clean_csv_field(port_semantic),
+                    clean_csv_field(device_semantic)
                 ])
 
     def _export_text(self, file_path: str):
