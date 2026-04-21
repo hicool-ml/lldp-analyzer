@@ -1,5 +1,10 @@
 name: Build macOS Application
 
+# 🔧 Node.js 24 兼容性修复
+# 添加 FORCE_JAVASCRIPT_ACTIONS_TO_NODE24 环境变量以提前启用Node.js 24
+# 避免2026年6月GitHub强制升级后构建失败
+# 参考: https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/
+
 on:
   push:
     branches: [ master, main ]
@@ -15,6 +20,8 @@ on:
 jobs:
   build-macos:
     runs-on: macos-latest  # GitHub Actions的macOS runner
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true  # 提前启用Node.js 24，避免2026年6月后失败
 
     steps:
     - name: Checkout代码
@@ -185,13 +192,14 @@ jobs:
         du -sh "dist/LLDP_Analyzer_v2_macos.dmg"
 
     - name: 上传构建产物
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v4  # 最新版本，兼容Node.js 24
       with:
         name: LLDP-Analyzer-macOS
         path: |
           dist/LLDP Analyzer v2.app
           dist/LLDP_Analyzer_v2_macos.dmg
         retention-days: 30
+        compression-level: 6  # 优化压缩速度
 
     - name: 创建GitHub Release (仅在tag时)
       if: startsWith(github.ref, 'refs/tags/')

@@ -93,13 +93,141 @@ python main_pro.py
   - 或Thunderbolt扩展坞
   - **注意**: Wi-Fi接口无法捕获LLDP报文
 
-**权限设置**:
-1. 首次运行需要授予网络捕获权限
-2. 在"系统设置 > 隐私与安全性 > 本地网络"中允许
-3. 如需管理员权限：
-   \`\`\`bash
-   sudo "LLDP Analyzer v2.app/Contents/MacOS/LLDP Analyzer v2"
-   \`\`\`
+**权限设置** (⚠️ **重要**: macOS网络捕获需要特殊权限):
+
+### 🔧 首次运行前的权限配置
+
+macOS需要root权限才能访问BPF设备进行网络数据包捕获。**必须先设置权限，否则无法捕获LLDP报文！**
+
+#### 方法1: 一次性权限修复（推荐）⭐
+
+**运行一次这个命令，之后就可以直接点击图标运行：**
+
+\`\`\`bash
+# 修复BPF设备权限
+sudo chgrp wheel /dev/bpf* && sudo chmod 660 /dev/bpf*
+\`\`\`
+
+**然后**：
+1. 直接双击 \`LLDP Analyzer v2.app\` 图标
+2. 在Launchpad或Spotlight中搜索并运行
+3. 像普通macOS应用一样使用
+
+#### 方法2: 永久权限修复（重启后仍有效）
+
+**如果你希望重启后仍然可以直接点击运行：**
+
+\`\`\`bash
+# 创建系统服务，每次启动时自动修复权限
+sudo tee /Library/LaunchDaemons/com.bpf.fix.plist << 'EOF'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.bpf.fix</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/chmod</string>
+        <string>660</string>
+        <string>/dev/bpf0</string>
+        <string>/dev/bpf1</string>
+        <string>/dev/bpf2</string>
+        <string>/dev/bpf3</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+</dict>
+</plist>
+EOF
+
+# 加载服务
+sudo launchctl load -w /Library/LaunchDaemons/com.bpf.fix.plist
+\`\`\`
+
+#### 方法3: 命令行启动（临时）
+
+**如果不想修改权限，可以每次用sudo启动：**
+
+\`\`\`bash
+# 进入Applications目录
+cd /Applications
+
+# 使用sudo运行
+sudo "LLDP Analyzer v2.app/Contents/MacOS/LLDP Analyzer v2"
+\`\`\`
+
+或者创建一个桌面启动器：
+
+\`\`\`bash
+# 在桌面创建启动器
+cat > ~/Desktop/LLDP\ Analyzer\ 启动器.command << 'EOF'
+#!/bin/bash
+cd /Applications
+sudo "LLDP Analyzer v2.app/Contents/MacOS/LLDP Analyzer v2"
+EOF
+
+chmod +x ~/Desktop/LLDP\ Analyzer\ 启动器.command
+
+# 之后双击桌面上的"LLDP Analyzer 启动器"即可
+\`\`\`
+
+### ⚠️ 常见权限问题
+
+**问题**: \`Permission denied: could not open /dev/bpf0\`
+- **原因**: BPF设备权限不足
+- **解决**: 运行 \`sudo chgrp wheel /dev/bpf* && sudo chmod 660 /dev/bpf*\`
+
+**问题**: 每次重启后需要重新设置权限
+- **解决**: 使用上面的"方法2: 永久权限修复"
+
+**问题**: 仍然无法捕获设备
+- **检查**: 是否选择了正确的网络接口（避免en0 Wi-Fi）
+- **检查**: 是否连接了支持LLDP的网络设备
+- **诊断**: 运行 \`python3 macos_network_check.py\` 诊断工具
+
+---
+
+### 🧪 macOS诊断工具
+
+LLDP Analyzer包含了专门的macOS诊断工具，可以帮助快速定位问题：
+
+\`\`\`bash
+# 运行诊断工具
+python3 macos_network_check.py
+
+# 诊断内容：
+# ✅ 操作系统版本检查
+# ✅ 管理员权限检查
+# ✅ 网络接口扫描
+# ✅ BPF设备状态
+# ✅ 原始套接字权限测试
+# ✅ 推荐合适的网络接口
+\`\`\`
+
+**推荐使用流程**：
+1. 遇到捕获问题时先运行诊断工具
+2. 根据诊断输出修复发现的问题
+3. 重新运行LLDP Analyzer
+
+---
+
+### 📱 macOS系统偏好设置
+
+某些情况下，需要在系统设置中手动授予权限：
+
+**完全磁盘访问权限**（如果应用无法启动）：
+1. 打开"系统设置 > 隐私与安全性"
+2. 选择"完全磁盘访问权限"
+3. 点击"+"添加"终端"或"LLDP Analyzer v2"
+
+**本地网络权限**（如果应用无法访问网络）：
+1. 打开"系统设置 > 隐私与安全性 > 本地网络"
+2. 确保LLDP Analyzer已启用
+
+**防火墙设置**（如果仍然无法捕获）：
+1. 打开"系统设置 > 网络 > 防火墙"
+2. 确保防火墙允许LLDP Analyzer或已关闭
 
 **方式3: 源码运行**
 
@@ -139,28 +267,77 @@ sudo python3 main_pro.py  # 需要root权限或CAP_NET_RAW能力
 
 ### 🍎 macOS 快速开始
 
-1. **连接网络适配器**
-   - 插入USB或Thunderbolt以太网适配器
-   - 连接网线到目标网络
+#### 📋 前提条件检查
+
+**在开始之前，请确认：**
+
+1. ✅ **已完成BPF权限设置**（见上面的"权限设置"章节）
+2. ✅ **已连接网络适配器**（USB/Thunderbolt以太网）
+3. ✅ **网线连接到支持LLDP的网络设备**
+
+#### 🚀 操作步骤
+
+1. **启动应用**
+   - 直接双击 \`LLDP Analyzer v2.app\` 图标
+   - 或在Launchpad中搜索"LLDP Analyzer"
+   - 如果出现权限提示，输入macOS密码
 
 2. **选择正确的网络接口**
-   - 优先选择 \`en1\`, \`en2\`, \`en3\` 等接口（通常是有线适配器）
-   - **避免选择** \`en0\`（通常是Wi-Fi，无法捕获LLDP）
-   - 程序会自动检测USB/Thunderbolt适配器并优先推荐
+   - **优先选择**: \`en1\`, \`en2\`, \`en3\` 等接口（通常是有线适配器）
+   - **避免选择**: \`en0\`（通常是Wi-Fi，无法捕获LLDP）
+   - **识别方法**: 接口描述包含"USB"、"Thunderbolt"、"Ethernet"
+   - **检查IP**: 有IP地址的接口说明物理链路已连接
 
-3. **授予权限**（首次运行）
-   - 系统会提示授予网络访问权限
-   - 点击"允许"以启用网络捕获功能
-
-4. **开始捕获**
+3. **开始捕获**
    - 点击"开始捕获"按钮
    - 等待3-5秒自动发现设备
    - 查看端口角色推断结果
 
-**macOS常见问题**:
-- ❗ **未发现设备**: 确认使用的是有线适配器，不是Wi-Fi
-- ❗ **权限被拒绝**: 在系统设置中手动允许网络访问权限
-- ❗ **USB适配器不工作**: 尝试更换USB口或重新拔插适配器
+#### 💡 网络接口选择指南
+
+**Mac mini M4/M2/M1内置万兆网卡：**
+- ⚠️ **已知问题**: 某些内置万兆网卡驱动可能不支持混杂模式
+- ✅ **推荐方案**: 使用USB/Thunderbolt以太网适配器
+- 📝 **接口名称**: 通常显示为 \`bridge0\` 或 \`tgten0\`
+- 🔧 **临时解决**: \`sudo ifconfig bridge0 mtu 1500\`（降低MTU）
+
+**MacBook Pro/Air便携系统：**
+- 🔌 **必需**: USB-C或Thunderbolt以太网适配器
+- ✅ **推荐**: Apple Thunderbolt至千兆以太网适配器
+- 📝 **接口名称**: 通常为 \`en1\`、\`en2\`
+- 🚫 **避免**: \`en0\`（Wi-Fi，无法捕获LLDP）
+
+**接口识别参考：**
+\`\`\`
+en0   Wi-Fi                    ❌ 避免选择
+en1   USB Ethernet             ✅ 优先选择
+en2   Thunderbolt Ethernet     ✅ 优先选择
+en3   USB 10GbE Adapter        ✅ 优先选择
+bridge0 Thunderbolt Bridge     ⚠️  可能不工作
+\`\`\`
+
+#### 🔍 macOS常见问题排查
+
+**❓ 未发现设备（已开启DEBUG日志）**
+- ✅ **检查物理连接**: 网线是否插好，LED灯是否亮起
+- ✅ **检查网络接口**: 是否选择了正确的有线接口
+- ✅ **检查目标设备**: 确认连接的是交换机/路由器，不是电脑
+- ✅ **检查LLDP状态**: 某些交换机端口默认关闭LLDP，需要在管理界面启用
+
+**❓ 权限被拒绝 (\`Permission denied: could not open /dev/bpf0\`)**
+- 🔧 **立即解决**: \`sudo chgrp wheel /dev/bpf* && sudo chmod 660 /dev/bpf*\`
+- 🔧 **永久解决**: 使用"方法2: 永久权限修复"（见权限设置章节）
+
+**❓ 捕获立即失败，无错误信息**
+- 🔍 **运行诊断**: \`python3 macos_network_check.py\`
+- 🔍 **手动测试**: \`sudo tcpdump -i en1 -v ether[12:2] == 0x88cc\`
+- 🔍 **检查接口**: \`ifconfig -a | grep -A 5 "flags=8863"\`
+
+**❓ Mac mini M4万兆网卡无法捕获**
+- 💡 **已知限制**: 某些万兆网卡驱动不支持混杂模式
+- ✅ **推荐方案**: 使用USB或Thunderbolt以太网适配器
+- 🔧 **临时测试**: 降低MTU \`sudo ifconfig bridge0 mtu 1500\`
+- 📝 **接口名称**: 检查 \`networksetup -listallhardwareports\` 输出
 
 ---
 
