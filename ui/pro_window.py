@@ -8,8 +8,10 @@ import os
 from typing import Optional
 import io
 from datetime import datetime
-import json  # 🔥 Required for export functions
-import csv   # 🔥 Required for CSV export
+import json  #  Required for export functions
+import csv   #  Required for CSV export
+from collections import deque  # 优化: 高效队列管理
+from pathlib import Path  # 优化C: 跨平台路径处理
 
 # Print redirector to avoid emoji encoding errors
 class SafeWriter:
@@ -53,6 +55,8 @@ from PyQt6.QtGui import QFont, QPalette, QTextCharFormat, QColor
 # Import from clean architecture
 from lldp import LLDPCaptureListener
 from lldp.model import LLDPDevice
+from lldp.cdp.model import CDPDevice
+from lldp.port_profile import PortRole, NetworkIntent, PortIntentProfile, infer_port_intent
 from lldp.view_model import to_view, DeviceView, GREEN_BADGE, BLUE_BADGE, YELLOW_BADGE, PURPLE_BADGE
 from lldp.utils import safe_get
 
@@ -80,6 +84,8 @@ class InfoCard(QGroupBox):
         """)
         self.layout = QVBoxLayout()
         self.layout.setSpacing(8)
+        # Set minimum size to prevent text cutoff
+        self.setMinimumWidth(250)
         self.setLayout(self.layout)
 
     def add_row(self, name: str, value: str = "—") -> QLabel:
@@ -93,9 +99,13 @@ class InfoCard(QGroupBox):
         # Apply specific styles to each label
         label_name.setStyleSheet("color:#94a3b8; font-size:13px;")
         label_value.setStyleSheet("color:#22c55e; font-weight:600; font-size:13px;")
+        # Ensure text doesn't get cut off
+        label_value.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
+        label_value.setWordWrap(False)
 
-        row.addWidget(label_name)
-        row.addWidget(label_value)
+        # Set stretch factors to prevent text cutoff
+        row.addWidget(label_name, 1)  # Name gets 1/4 space
+        row.addWidget(label_value, 3)  # Value gets 3/4 space
         self.layout.addLayout(row)
 
         return label_value
@@ -111,7 +121,99 @@ class LLDPProfessionalWindow(QWidget):
     # Define signals for thread-safe UI updates
     device_discovered = pyqtSignal(object)
     capture_complete = pyqtSignal(list)
-    debug_log = pyqtSignal(str)  # 🔥 新增：DEBUG日志信号
+    debug_log = pyqtSignal(str)  #  新增：DEBUG日志信号
+
+    class InterfaceScannerThread(QThread):
+        """
+        异步网卡扫描线程 - 避免UI冻结
+
+        优化B: 将耗时的网卡扫描操作移到后台线程
+        """
+        finished = pyqtSignal(list)  # 信号：扫描完成，返回有效接口列表
+
+        def run(self):
+            """执行网卡扫描 - 在后台线程中运行"""
+            try:
+                from scapy.all import get_working_ifaces
+
+                print(f"[DEBUG] ===== Async Interface Scanning Started =====", flush=True)
+
+                all_interfaces = list(get_working_ifaces())
+                valid_interfaces = []
+
+                for iface in all_interfaces:
+                    print(f"[DEBUG] Checking interface: {iface.name}", flush=True)
+                    print(f"[DEBUG]  Description: {iface.description}", flush=True)
+
+                    # 只选择有线物理网卡，排除无线和虚拟网卡
+                    desc = iface.description.lower()
+                    name = iface.name.lower()
+
+                    # 排除条件：无线、虚拟、VPN、调试等网卡
+                    is_excluded = (
+                        # 排除无线网卡
+                        "wi-fi" in desc or "wifi" in desc or "wireless" in desc or
+                        "802.11" in desc or "wlan" in name or "wi" in name or
+
+                        # 排除虚拟网卡
+                        "virtual" in desc or "hyper-v" in desc or "vmware" in desc or
+                        "virtualbox" in desc or "vbox" in desc or "qemu" in desc or
+                        "vnic" in desc or "vEthernet" in name or "vnic" in name or
+
+                        # 排除VPN网卡
+                        "vpn" in desc or "tap" in name or "tun" in name or
+                        "point-to-point" in desc or "ppp" in name or
+
+                        # 排除调试网卡
+                        "ndis" in desc or "loopback" in desc or name == "lo" or
+                        "bluetooth" in desc or "bt" in name or
+
+                        # 排除WAN Miniport网卡（网络监控等）
+                        "wan miniport" in desc or "miniport" in desc or
+                        "network monitor" in desc or "monitor" in desc or
+
+                        # 排除容器网卡
+                        "docker" in desc or "bridge" in desc or "veth" in name or
+                        "container" in desc
+                    )
+
+                    # 包含条件：必须是有线物理网卡的特征
+                    is_included = (
+                        # 标准以太网描述
+                        "ethernet" in desc or "以太网" in desc or
+                        # 有线网卡制造商
+                        "realtek" in desc or "intel" in desc or
+                        "broadcom" in desc or "qualcomm" in desc or
+                        "marvell" in desc or "killer" in desc or
+                        # 控制器类型
+                        ("controller" in desc and "network" in desc) or
+                        "pci" in desc or "express" in desc or
+                        # Linux有线网卡命名
+                        name.startswith("eth") or name.startswith("en") or
+                        # 通用网络适配器（必须包含adapter且不是虚拟的）
+                        ("adapter" in desc and not is_excluded) or
+                        # 简单的网卡描述（在Windows中常见）
+                        ("network" in desc or "lan" in desc) and not is_excluded
+                    )
+
+                    is_valid = is_included and not is_excluded
+
+                    if is_valid:
+                        valid_interfaces.append(iface)
+                        print(f"[DEBUG] Added interface: {iface.description} ({iface.name})", flush=True)
+
+                print(f"[DEBUG] Async scanning found {len(valid_interfaces)} valid interfaces", flush=True)
+                print(f"[DEBUG] ===== Async Interface Scanning Complete =====", flush=True)
+
+                # 发出完成信号，传递有效接口列表
+                self.finished.emit(valid_interfaces)
+
+            except Exception as e:
+                print(f"[ERROR] Async interface scanning failed: {e}", flush=True)
+                import traceback
+                traceback.print_exc()
+                # 发出空列表表示失败
+                self.finished.emit([])
 
     def __init__(self):
         super().__init__()
@@ -119,7 +221,7 @@ class LLDPProfessionalWindow(QWidget):
         self.setMinimumSize(800, 600)
         self.setStyleSheet("background-color:#0f172a; font-family:'Segoe UI Variable','Microsoft YaHei UI';")
 
-        # 🔥 设置窗口图标
+        #  设置窗口图标
         self._set_window_icon()
 
         # Core components (clean architecture)
@@ -127,21 +229,14 @@ class LLDPProfessionalWindow(QWidget):
         self.current_device: Optional[LLDPDevice] = None
         self.discovered_devices = []
 
-        # 🔥 Debug输出 - 现在输出到UI日志框
-        # print("[DEBUG] ========================================", flush=True)
-        # print("[DEBUG] LLDP Professional Window Initializing...", flush=True)
-        # print("[DEBUG] CDP Support: ENABLED 🔥", flush=True)
-        # print("[DEBUG] Debug Console: ACTIVE ✅", flush=True)
-        # print("[DEBUG] ========================================", flush=True)
-
         # Build UI
         self.setup_ui()
 
-        # 🔥 恢复日志功能，但要优化避免卡死UI
+        # Logging configuration
         self.log_buffer = []
         self.debug_enabled = False
-        self.debug_log_queue = []  # 🔥 新增：DEBUG日志队列（线程安全）
-        self.debug_log_timer = None  # 🔥 新增：DEBUG日志处理定时器
+        self.debug_log_queue = deque(maxlen=1000)  # 优化: 使用deque避免内存问题
+        self.debug_log_timer = None
 
         # Setup logging
         self.setup_logging()
@@ -149,7 +244,7 @@ class LLDPProfessionalWindow(QWidget):
         # Setup DEBUG output capture
         self.setup_debug_capture()
 
-        # 🔥 连接DEBUG日志信号
+        # Connect DEBUG log signal
         self.debug_log.connect(self._on_debug_log_ui)
 
         # Auto-detect interfaces
@@ -165,35 +260,40 @@ class LLDPProfessionalWindow(QWidget):
             traceback.print_exc()
 
         # Connect signals to slots for thread-safe UI updates
-        # 🔥 CRITICAL: Use QueuedConnection to ensure slots run in main thread, not capture thread
+        # CRITICAL: Use QueuedConnection to ensure slots run in main thread, not capture thread
         self.log("连接基础信号槽...", "DEBUG")
         self.device_discovered.connect(self._on_device_discovered_ui, Qt.ConnectionType.QueuedConnection)
         self.capture_complete.connect(self._on_capture_complete_ui, Qt.ConnectionType.QueuedConnection)
         self.log("基础信号槽连接完成", "DEBUG")
 
     def _set_window_icon(self):
-        """Set window icon from file"""
-        from PyQt6.QtGui import QIcon
-        import os
+        """
+        Set window icon from file
 
-        # 查找图标文件
+        优化C: 使用pathlib.Path进行跨平台路径处理
+        """
+        from PyQt6.QtGui import QIcon
+
+        # 查找图标文件 - 使用pathlib.Path
         meipass = getattr(sys, '_MEIPASS', '')
+        current_dir = Path(__file__).parent.parent
+
         icon_paths = [
             # 开发环境：使用相对路径
-            os.path.join(os.path.dirname(os.path.dirname(__file__)), 'lldp_icon.png'),
-            os.path.join(os.path.dirname(os.path.dirname(__file__)), 'lldp_icon.ico'),
+            current_dir / 'lldp_icon.png',
+            current_dir / 'lldp_icon.ico',
             # 打包后：在sys._MEIPASS中查找
-            os.path.join(meipass, 'lldp_icon.png'),
-            os.path.join(meipass, 'lldp_icon.ico'),
+            Path(meipass) / 'lldp_icon.png',
+            Path(meipass) / 'lldp_icon.ico',
             # 当前目录
-            'lldp_icon.png',
-            'lldp_icon.ico',
+            Path('lldp_icon.png'),
+            Path('lldp_icon.ico'),
         ]
 
         for icon_path in icon_paths:
-            if os.path.exists(icon_path):
+            if icon_path.exists():
                 try:
-                    icon = QIcon(icon_path)
+                    icon = QIcon(str(icon_path))  # QIcon需要字符串路径
                     self.setWindowIcon(icon)
                     return
                 except Exception:
@@ -225,7 +325,7 @@ class LLDPProfessionalWindow(QWidget):
 
         self.setLayout(main)
 
-        # 🔥 在UI创建完成后连接debug_checkbox信号
+        # Connect debug_checkbox signal after UI creation
         self.debug_checkbox.stateChanged.connect(self._on_debug_checkbox_changed)
 
     def setup_logging(self):
@@ -249,7 +349,7 @@ class LLDPProfessionalWindow(QWidget):
         if state == 2:  # Checked
             self.debug_enabled = True
 
-            # 🔥 Start debug log processing timer
+            #  Start debug log processing timer
             if not self.debug_log_timer:
                 self.debug_log_timer = QTimer()
                 self.debug_log_timer.timeout.connect(self._process_debug_log_queue)
@@ -262,7 +362,7 @@ class LLDPProfessionalWindow(QWidget):
 
                 # Check if this is a DEBUG message
                 if '[DEBUG]' in message or '[ERROR]' in message or 'Packet:' in message:
-                    # 🔥 线程安全：将日志放入队列，而不是直接调用UI方法
+                    #  线程安全：将日志放入队列，而不是直接调用UI方法
                     self.debug_log_queue.append(message)
                 else:
                     self.original_print(*args, **kwargs)
@@ -273,7 +373,7 @@ class LLDPProfessionalWindow(QWidget):
             self.debug_enabled = False
             builtins.print = self.original_print
 
-            # 🔥 Stop debug log processing timer
+            #  Stop debug log processing timer
             if self.debug_log_timer:
                 self.debug_log_timer.stop()
                 self.debug_log_timer = None
@@ -284,11 +384,15 @@ class LLDPProfessionalWindow(QWidget):
             self.log("详细DEBUG日志已禁用", "INFO")
 
     def _process_debug_log_queue(self):
-        """处理DEBUG日志队列 - 在主线程中执行"""
+        """
+        处理DEBUG日志队列 - 在主线程中执行
+
+        修复: 使用deque避免逻辑错误，提高性能
+        """
         if not self.debug_log_queue:
             return
 
-        # 🔥 优化：限制DEBUG日志显示，防止阻塞UI
+        #  优化：限制DEBUG日志显示，防止阻塞UI
         max_display = 100  # 最多显示100条DEBUG日志
         current_count = len(self.debug_log_queue)
 
@@ -296,23 +400,27 @@ class LLDPProfessionalWindow(QWidget):
         if current_count > max_display:
             # 使用log方法而不是log_raw，因为log支持level参数
             self.log(f"DEBUG日志过多（{current_count}条），已自动清理", "WARNING")
-            # 只保留最后50条
-            self.debug_log_queue = self.debug_log_queue[-50:]
+            # deque会自动管理maxlen，这里只需要处理多余的元素
+            excess = current_count - 50
+            for _ in range(excess):
+                if self.debug_log_queue:
+                    self.debug_log_queue.popleft()
 
         # 批量处理，每次最多5条，避免阻塞UI
         batch_size = 5
         processed = 0
 
         while self.debug_log_queue and processed < batch_size:
-            message = self.debug_log_queue.pop(0)
+            # 修复: 使用popleft()而不是pop(0)，deque的popleft()是O(1)操作
+            message = self.debug_log_queue.popleft()
 
-            # 🔥 只显示重要的DEBUG日志，过滤掉详细的数据包解析
+            #  只显示重要的DEBUG日志，过滤掉详细的数据包解析
             if any(keyword in message for keyword in [
                 'Device found', 'VLAN:', 'H3C Private TLV',
                 '已发现', '完成', 'SUCCESS', 'ERROR', 'WARNING'
             ]):
                 self.log_raw(message)
-            elif '[DEBUG] 📊 Processed' in message:
+            elif '[DEBUG] Processed' in message:
                 # 每100个包显示一次进度
                 self.log_raw(message)
 
@@ -326,18 +434,18 @@ class LLDPProfessionalWindow(QWidget):
         """Add log message to the log display - Performance optimized with QPlainTextEdit"""
         import datetime
 
-        # 🔥 安全检查：debug_checkbox可能还未初始化
+        #  安全检查：debug_checkbox可能还未初始化
         if hasattr(self, 'debug_checkbox') and level == "DEBUG":
             if not self.debug_checkbox.isChecked():
                 return  # Skip DEBUG messages unless checkbox is checked
 
         timestamp = datetime.datetime.now().strftime("%H:%M:%S")
 
-        # 🔥 添加到日志缓冲区（用于自动保存）
+        #  添加到日志缓冲区（用于自动保存）
         log_entry = f"[{timestamp}] [{level}] {message}"
         self.log_buffer.append(log_entry)
 
-        # 🔥 性能优化：使用QTextCharFormat而不是HTML
+        #  性能优化：使用QTextCharFormat而不是HTML
         color_map = {
             "INFO": "#94a3b8",
             "DEBUG": "#f59e0b",
@@ -358,14 +466,14 @@ class LLDPProfessionalWindow(QWidget):
 
         cursor.insertText(formatted_message + "\n", format)
 
-        # 🔥 节流优化：避免频繁滚动导致的UI卡顿
+        #  节流优化：避免频繁滚动导致的UI卡顿
         scrollbar = self.log_text.verticalScrollBar()
         if scrollbar.value() >= scrollbar.maximum() - 10:
             scrollbar.setValue(scrollbar.maximum())
 
     def log_raw(self, message: str):
         """Add raw DEBUG output ( for detailed packet parsing) - Performance optimized"""
-        # 🔥 安全检查：确保UI组件存在且debug_checkbox已勾选
+        #  安全检查：确保UI组件存在且debug_checkbox已勾选
         if not hasattr(self, 'debug_checkbox') or not self.debug_checkbox.isChecked():
             return
 
@@ -375,7 +483,7 @@ class LLDPProfessionalWindow(QWidget):
         import datetime
         timestamp = datetime.datetime.now().strftime("%H:%M:%S")
 
-        # 🔥 性能优化：使用纯文本而不是HTML
+        #  性能优化：使用纯文本而不是HTML
         formatted_message = f"[{timestamp}] {message}"
 
         cursor = self.log_text.textCursor()
@@ -386,7 +494,7 @@ class LLDPProfessionalWindow(QWidget):
 
         cursor.insertText(formatted_message + "\n", format)
 
-        # 🔥 节流优化：限制滚动频率
+        #  节流优化：限制滚动频率
         scrollbar = self.log_text.verticalScrollBar()
         if scrollbar.value() >= scrollbar.maximum() - 10:
             scrollbar.setValue(scrollbar.maximum())
@@ -456,7 +564,7 @@ class LLDPProfessionalWindow(QWidget):
         adapter_row.addWidget(adapter_label)
         adapter_row.addWidget(self.adapter_combo)
 
-        # 🔥 UX优化：添加网卡刷新按钮
+        #  UX优化：添加网卡刷新按钮
         refresh_btn = QPushButton("🔄")
         refresh_btn.setFixedWidth(40)
         refresh_btn.setToolTip("刷新网络适配器列表")
@@ -528,7 +636,7 @@ class LLDPProfessionalWindow(QWidget):
 
         # Right card - Port Info
         self.card_port = InfoCard("连接端口")
-        # 🔥 NEW: Port Semantic Profile (协议语义推断)
+        #  NEW: Port Semantic Profile (协议语义推断)
         self.port_role = self.card_port.add_row("端口角色")  # 新增：显示推断的端口角色
         self.protocol = self.card_port.add_row("协议类型")
         self.port_id = self.card_port.add_row("端口 ID")
@@ -566,17 +674,22 @@ class LLDPProfessionalWindow(QWidget):
         self.lldp_med.setText("未知")
 
         # Port info
-        self.port_role.setText("等待捕获...")  # NEW
-        self.port_role.setStyleSheet("color:#94a3b8;")  # NEW
-        self.protocol.setText("等待开始捕获")
-        self.protocol.setStyleSheet("color:#fbbf24; font-weight:600;")
-        self.port_id.setText("等待开始捕获")
-        self.port_id.setStyleSheet("color:#fbbf24; font-weight:600;")
+        self.port_role.setText("—")  # 初始状态
+        self.port_role.setStyleSheet("color:#94a3b8; font-style:italic;")
+        self.protocol.setText("—")
+        self.protocol.setStyleSheet("color:#94a3b8; font-style:italic;")
+        self.port_id.setText("—")
+        self.port_id.setStyleSheet("color:#94a3b8; font-style:italic;")
 
-        self.port_type.setText("未知")
-        self.port_desc.setText("未知")
-        self.port_vlan.setText("未知")
-        self.macphy.setText("未知")
+        self.port_type.setText("—")
+        self.port_desc.setText("—")
+        self.port_vlan.setText("—")
+        self.protocol_vlan.setText("—")
+        self.macphy.setText("—")
+        self.link_agg.setText("—")
+        self.mtu.setText("—")
+        self.poe.setText("—")
+        self.capabilities.setText("—")
         self.link_agg.setText("未知")
         self.mtu.setText("未知")
         self.poe.setText("未知")
@@ -637,7 +750,7 @@ class LLDPProfessionalWindow(QWidget):
         # Log header with checkbox
         header_layout = QHBoxLayout()
 
-        title = QLabel("📋 运行日志")
+        title = QLabel("运行日志")
         title.setStyleSheet("""
             font-size: 14px;
             font-weight: 600;
@@ -676,7 +789,7 @@ class LLDPProfessionalWindow(QWidget):
         self.log_text = QPlainTextEdit()
         self.log_text.setReadOnly(True)
         self.log_text.setMaximumHeight(150)
-        # 🔥 性能优化：限制最大行数，防止内存溢出和UI卡顿
+        #  性能优化：限制最大行数，防止内存溢出和UI卡顿
         self.log_text.setMaximumBlockCount(200)  # 降低到200行，提升性能
         self.log_text.setStyleSheet("""
             QPlainTextEdit {
@@ -735,94 +848,62 @@ class LLDPProfessionalWindow(QWidget):
             button.clicked.connect(self.export_data)
 
     def refresh_interfaces(self):
-        """Refresh network adapter list"""
-        try:
-            from scapy.all import get_working_ifaces
+        """
+        Refresh network adapter list - 异步版本避免UI冻结
 
+        优化B: 使用后台线程进行网卡扫描，避免UI冻结
+        """
+        try:
+            # 显示扫描状态
             self.adapter_combo.clear()
             self.interfaces = []
+            self.status_label.setText("正在扫描网络适配器...")
+            self.start_btn.setEnabled(False)
+            self.log("开始异步扫描网络接口...", "DEBUG")
 
-            self.log("开始扫描网络接口...", "DEBUG")
-            print(f"[DEBUG] ===== Scanning for network interfaces =====", flush=True)
+            # 创建并启动扫描线程
+            self.interface_scanner = self.InterfaceScannerThread()
+            self.interface_scanner.finished.connect(self._on_interface_scan_complete)
+            self.interface_scanner.start()
 
-            all_interfaces = list(get_working_ifaces())
-            self.log(f"发现 {len(all_interfaces)} 个网络接口", "DEBUG")
-            print(f"[DEBUG] Found {len(all_interfaces)} total interfaces", flush=True)
+        except Exception as e:
+            print(f"[ERROR] Interface scan failed: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            self.status_label.setText(f"错误: 无法扫描网络适配器")
+            QMessageBox.critical(self, "严重错误", f"无法扫描网络适配器！\n\n错误信息: {e}")
 
-            for iface in all_interfaces:
-                print(f"[DEBUG] Checking interface: {iface.name}", flush=True)
-                print(f"[DEBUG]  Description: {iface.description}", flush=True)
+    def _on_interface_scan_complete(self, valid_interfaces):
+        """
+        网卡扫描完成回调 - 在主线程中执行
 
-                # 只选择有线物理网卡，排除无线和虚拟网卡
-                desc = iface.description.lower()
-                name = iface.name.lower()
+        Args:
+            valid_interfaces: 扫描到的有效网卡列表
+        """
+        try:
+            # 更新接口列表
+            self.interfaces = valid_interfaces
 
-                # 排除条件：无线、虚拟、VPN、调试等网卡
-                is_excluded = (
-                    # 排除无线网卡
-                    "wi-fi" in desc or "wifi" in desc or "wireless" in desc or
-                    "802.11" in desc or "wlan" in name or "wi" in name or
+            # 清空并重新填充下拉菜单
+            self.adapter_combo.clear()
 
-                    # 排除虚拟网卡
-                    "virtual" in desc or "hyper-v" in desc or "vmware" in desc or
-                    "virtualbox" in desc or "vbox" in desc or "qemu" in desc or
-                    "vnic" in desc or "vEthernet" in name or "vnic" in name or
+            # 添加找到的接口
+            for iface in valid_interfaces:
+                display_text = f"{iface.description} ({iface.name})"
+                self.adapter_combo.addItem(display_text, iface)
+                self.log(f"添加网卡: {display_text}", "DEBUG")
 
-                    # 排除VPN网卡
-                    "vpn" in desc or "tap" in name or "tun" in name or
-                    "point-to-point" in desc or "ppp" in name or
-
-                    # 排除调试网卡
-                    "ndis" in desc or "loopback" in desc or name == "lo" or
-                    "bluetooth" in desc or "bt" in name or
-
-                    # 排除WAN Miniport网卡（网络监控等）
-                    "wan miniport" in desc or "miniport" in desc or
-                    "network monitor" in desc or "monitor" in desc or
-
-                    # 排除容器网卡
-                    "docker" in desc or "bridge" in desc or "veth" in name or
-                    "container" in desc
-                )
-
-                # 包含条件：必须是有线物理网卡的特征
-                is_included = (
-                    # 标准以太网描述
-                    "ethernet" in desc or "以太网" in desc or
-                    # 有线网卡制造商
-                    "realtek" in desc or "intel" in desc or
-                    "broadcom" in desc or "qualcomm" in desc or
-                    "marvell" in desc or "killer" in desc or
-                    # 控制器类型
-                    ("controller" in desc and "network" in desc) or
-                    "pci" in desc or "express" in desc or
-                    # Linux有线网卡命名
-                    name.startswith("eth") or name.startswith("en") or
-                    # 通用网络适配器（必须包含adapter且不是虚拟的）
-                    ("adapter" in desc and not is_excluded) or
-                    # 简单的网卡描述（在Windows中常见）
-                    ("network" in desc or "lan" in desc) and not is_excluded
-                )
-
-                is_valid = is_included and not is_excluded
-
-                if is_valid:
-                    self.interfaces.append(iface)
-                    display_text = f"{iface.description} ({iface.name})"
-                    self.adapter_combo.addItem(display_text, iface)
-                    self.log(f"添加网卡: {display_text}", "DEBUG")
-                    print(f"[DEBUG] ✅ Added interface: {display_text}", flush=True)
-
-            self.log(f"扫描完成，找到 {len(self.interfaces)} 个有效网卡", "SUCCESS")
-            print(f"[DEBUG] Found {len(self.interfaces)} valid network interfaces", flush=True)
-            print(f"[DEBUG] ========================================", flush=True)
+            self.log(f"异步扫描完成，找到 {len(self.interfaces)} 个有效网卡", "SUCCESS")
 
             if self.interfaces:
                 self.start_btn.setEnabled(True)
                 self.status_label.setText(f"找到 {len(self.interfaces)} 个网络适配器")
+
+                # 优化4: 自动选择最佳网卡
+                self._auto_select_best_interface()
             else:
                 self.start_btn.setEnabled(False)
-                self.status_label.setText("⚠️ 未找到合适的网络适配器")
+                self.status_label.setText("未找到合适的网络适配器")
                 self.log("未找到合适的网络适配器", "WARNING")
                 QMessageBox.warning(self, "网络接口问题",
                     "未找到合适的网络适配器！\n\n"
@@ -833,22 +914,105 @@ class LLDPProfessionalWindow(QWidget):
                     "请检查网络连接后重试。")
 
         except Exception as e:
-            print(f"[DEBUG] ❌ Error scanning interfaces: {e}", flush=True)
+            print(f"[ERROR] Interface scan callback failed: {e}", flush=True)
             import traceback
             traceback.print_exc()
-            self.status_label.setText(f"❌ 错误: 无法扫描网络适配器")
+            self.status_label.setText(f"错误: 网卡扫描处理失败")
+
+        except Exception as e:
+            print(f"[DEBUG] Error scanning interfaces: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
+            self.status_label.setText(f"错误: 无法扫描网络适配器")
             QMessageBox.critical(self, "严重错误", f"无法扫描网络适配器！\n\n错误信息: {e}")
+
+    def _auto_select_best_interface(self):
+        """
+        自动选择最佳网络接口
+
+        优化: 基于启发式规则选择最可能的LLDP设备连接口
+        优先级: 有IP > 知名厂商 > 标准命名 > 第一个
+        """
+        if not self.interfaces:
+            return
+
+        best_interface = None
+        best_score = -1
+
+        for iface in self.interfaces:
+            score = 0
+            reasons = []
+
+            # 评分规则1: 有IP地址（说明网络已连接）
+            if hasattr(iface, 'ip') and iface.ip:
+                score += 100
+                reasons.append(f"有IP({iface.ip})")
+
+            # 评分规则2: 知名网卡制造商（更可能是物理连接）
+            desc_lower = iface.description.lower()
+            if any(brand in desc_lower for brand in ['intel', 'realtek', 'broadcom', 'qualcomm']):
+                score += 50
+                reasons.append("知名厂商")
+
+            # 评分规则3: 标准以太网命名
+            if 'ethernet' in desc_lower or '以太网' in desc_lower:
+                score += 30
+                reasons.append("标准以太网")
+
+            # 评分规则4: 避免测试/调试接口
+            if any(test_term in desc_lower for test_term in ['test', 'debug', 'virtual', 'loopback']):
+                score -= 100
+                reasons.append("测试接口(扣分)")
+
+            # 评分规则5: 接口命名优先级
+            name_lower = iface.name.lower()
+            if name_lower in ['eth0', 'en0', 'eth1']:  # Linux/macOS主网口
+                score += 20
+                reasons.append("主网口命名")
+            elif name_lower.startswith('eth') or name_lower.startswith('en'):
+                score += 10
+                reasons.append("标准命名")
+
+            # 评分规则6: PCI接口（通常是物理网卡）
+            if 'pci' in desc_lower:
+                score += 15
+                reasons.append("PCI接口")
+
+            print(f"[DEBUG] Interface {iface.name} scored {score}: {', '.join(reasons)}")
+
+            if score > best_score:
+                best_score = score
+                best_interface = iface
+
+        # 选择得分最高的接口
+        if best_interface:
+            index = self.interfaces.index(best_interface)
+            self.adapter_combo.setCurrentIndex(index)
+
+            selection_reasons = []
+            if hasattr(best_interface, 'ip') and best_interface.ip:
+                selection_reasons.append(f"已配置IP: {best_interface.ip}")
+            if best_score > 50:
+                selection_reasons.append("知名厂商或标准命名")
+
+            reason_text = "，".join(selection_reasons) if selection_reasons else "默认选择"
+            self.log(f"自动选择网卡: {best_interface.description} ({reason_text})", "SUCCESS")
+            print(f"[DEBUG] Auto-selected: {best_interface.description} (score: {best_score})")
+        else:
+            # 如果没有最佳选择，默认选择第一个
+            self.adapter_combo.setCurrentIndex(0)
+            self.log(f"使用默认网卡: {self.interfaces[0].description}", "INFO")
 
     def start_capture(self):
         """Start LLDP capture"""
-        # 🔥 UX优化：立即禁用按钮，防止双击
+        #  UX优化：立即禁用按钮，防止双击
         self.start_btn.setEnabled(False)
         self.start_btn.repaint()  # 强制重绘，确保UI立即更新
 
         print(f"[DEBUG] ===== start_capture called =====", flush=True)
 
         if not hasattr(self, 'interfaces') or not self.interfaces:
-            print(f"[DEBUG] ❌ No interfaces available!", flush=True)
+            print(f"[DEBUG] No interfaces available!", flush=True)
             QMessageBox.warning(self, "警告", "请先选择网络适配器！\n\n没有找到可用的网络适配器。")
             return
 
@@ -858,33 +1022,33 @@ class LLDPProfessionalWindow(QWidget):
         current_data = self.adapter_combo.currentData()
         if not current_data:
             self.log("没有选择网络适配器", "ERROR")
-            print(f"[DEBUG] ❌ No interface selected!", flush=True)
+            print(f"[DEBUG] No interface selected!", flush=True)
             QMessageBox.warning(self, "警告", "请选择一个网络适配器！")
             return
 
         interface = current_data
         self.log(f"选择网卡: {interface.description}", "INFO")
-        print(f"[DEBUG] ✅ Selected interface: {interface.description} ({interface.name})", flush=True)
+        print(f"[DEBUG] Selected interface: {interface.description} ({interface.name})", flush=True)
         print(f"[DEBUG] Starting capture on: {interface.description}", flush=True)
 
-        # 🔍 物理链路检查 - 避免盲目捕获
-        print(f"[DEBUG] 🔍 Checking physical link status...", flush=True)
+        # 物理链路检查 - 避免盲目捕获
+        print(f"[DEBUG] Checking physical link status...", flush=True)
         has_ip = hasattr(interface, 'ip') and interface.ip is not None
 
         if has_ip:
             self.log(f"网卡IP: {interface.ip} - 链路正常", "SUCCESS")
-            print(f"[DEBUG] ✅ Interface has IP: {interface.ip}", flush=True)
-            print(f"[DEBUG] ✅ Physical link appears to be UP", flush=True)
+            print(f"[DEBUG] Interface has IP: {interface.ip}", flush=True)
+            print(f"[DEBUG] Physical link appears to be UP", flush=True)
         else:
             self.log(f"网卡无IP地址 - 链路可能未连接", "WARNING")
-            print(f"[DEBUG] ❌ Interface has NO IP address!", flush=True)
-            print(f"[DEBUG] ❌ Physical link might be DOWN!", flush=True)
+            print(f"[DEBUG] Interface has NO IP address!", flush=True)
+            print(f"[DEBUG] Physical link might be DOWN!", flush=True)
 
             # 弹出警告对话框
             reply = QMessageBox.question(
                 self,
                 "物理链路警告",
-                f"⚠️ 选中网卡没有IP地址，可能物理链路未连接：\n\n"
+                f"选中网卡没有IP地址，可能物理链路未连接：\n\n"
                 f"网卡: {interface.description}\n"
                 f"状态: 无IP地址\n\n"
                 f"请检查：\n"
@@ -928,7 +1092,7 @@ class LLDPProfessionalWindow(QWidget):
         try:
             self.log("开始LLDP/CDP报文捕获...", "INFO")
             print(f"[DEBUG] ========================================", flush=True)
-            print(f"[DEBUG] 🚀 STARTING CAPTURE PROCESS", flush=True)
+            print(f"[DEBUG] STARTING CAPTURE PROCESS", flush=True)
             print(f"[DEBUG] Interface: {interface.description}", flush=True)
             print(f"[DEBUG] Interface Name: {interface.name}", flush=True)
             print(f"[DEBUG] Max Duration: 60 seconds (will stop early if device found!)", flush=True)
@@ -942,10 +1106,54 @@ class LLDPProfessionalWindow(QWidget):
             )
             self.log("捕获进程已启动，最长60秒", "SUCCESS")
             print("[DEBUG] Capture started successfully")
+
+        except PermissionError as e:
+            # 优化: 专门处理权限错误
+            error_msg = f"网络访问权限不足:\n\n{str(e)}\n\n" \
+                      f"请尝试以下解决方案:\n" \
+                      f"1. 以管理员身份运行程序\n" \
+                      f"2. 检查防火墙设置\n" \
+                      f"3. 检查杀毒软件是否拦截\n" \
+                      f"4. 关闭其他可能占用网卡的工具"
+            self.log(f"权限错误: {e}", "ERROR")
+            print(f"[ERROR] Permission denied: {e}")
+            QMessageBox.critical(self, "权限错误", error_msg)
+            self.capture_complete_update()
+
+        except OSError as e:
+            # 优化: 处理系统级网络错误
+            if "Operation not permitted" in str(e) or "Permission denied" in str(e):
+                error_msg = f"网络访问被拒绝:\n\n{str(e)}\n\n" \
+                          f"请尝试以下解决方案:\n" \
+                          f"1. 以管理员身份运行程序\n" \
+                          f"2. 检查网络适配器状态\n" \
+                          f"3. 重启网络服务"
+            elif "No such device" in str(e) or "does not exist" in str(e):
+                error_msg = f"网络适配器不存在:\n\n{str(e)}\n\n" \
+                          f"请检查:\n" \
+                          f"1. 网卡是否被禁用\n" \
+                          f"2. 网卡驱动是否正常\n" \
+                          f"3. 网线是否连接"
+            else:
+                error_msg = f"系统网络错误:\n\n{str(e)}"
+
+            self.log(f"系统错误: {e}", "ERROR")
+            print(f"[ERROR] OS Error: {e}")
+            QMessageBox.critical(self, "系统错误", error_msg)
+            self.capture_complete_update()
+
         except Exception as e:
+            # 通用错误处理
+            import traceback
+            error_details = traceback.format_exc()
             self.log(f"捕获启动失败: {e}", "ERROR")
             print(f"[ERROR] Capture failed: {e}")
-            QMessageBox.critical(self, "错误", f"捕获启动失败:\n{str(e)}")
+            print(f"[DEBUG] Traceback:\n{error_details}")
+
+            # 向用户显示友好的错误信息
+            user_friendly_msg = f"捕获启动失败:\n\n{str(e)}\n\n" \
+                              f"技术详情已记录到日志文件"
+            QMessageBox.critical(self, "启动失败", user_friendly_msg)
             self.capture_complete_update()
 
     def show_capture_status(self):
@@ -993,22 +1201,26 @@ class LLDPProfessionalWindow(QWidget):
 
     def on_device_discovered(self, device: LLDPDevice):
         """Callback when device discovered - runs in capture thread"""
-        # 🔥 MINIMAL: Only emit signal - nothing else!
+        #  MINIMAL: Only emit signal - nothing else!
         # The QueuedConnection ensures this runs in the main thread, not here
         self.device_discovered.emit(device)
 
-    def _on_device_discovered_ui(self, device: LLDPDevice):
+    def _on_device_discovered_ui(self, device):
         """UI update slot - runs in main thread, thread-safe"""
         try:
-            # 🔥 暂停DEBUG日志处理，确保UI更新优先
+            #  暂停DEBUG日志处理，确保UI更新优先
             if self.debug_log_timer:
                 self.debug_log_timer.stop()
+
+            # Determine device type
+            is_cdp = isinstance(device, CDPDevice)
+            is_lldp = isinstance(device, LLDPDevice)
 
             # Update device list first (in main thread)
             self.discovered_devices.append(device)
             self.current_device = device
 
-            # Update UI display
+            # Update UI display (MVVM架构：不需要协议类型参数)
             self.update_device_display(device)
 
             # Update device count
@@ -1016,7 +1228,7 @@ class LLDPProfessionalWindow(QWidget):
             self.device_count_label.setText(f"已发现: {count} 台设备")
             self.log(f"设备已发现: {device.get_display_name()}", "SUCCESS")
 
-            # 🔥 恢复DEBUG日志处理
+            #  恢复DEBUG日志处理
             if self.debug_log_timer and self.debug_enabled:
                 self.debug_log_timer.start(100)  # 改为100ms，降低优先级
 
@@ -1085,7 +1297,12 @@ class LLDPProfessionalWindow(QWidget):
             traceback.print_exc()
 
     def update_device_display(self, device):
-        """Update device info cards - Clean architecture with ViewModel + PortProfile"""
+        """
+        Update device info cards - 彻底解耦架构
+
+        架构原则: UI层不应该有任何协议判断逻辑
+        所有的协议差异化（LLDP vs CDP）都在to_view()中处理
+        """
         try:
             # Safety checks
             if not hasattr(self, 'sw_name') or not hasattr(self, 'protocol'):
@@ -1099,29 +1316,17 @@ class LLDPProfessionalWindow(QWidget):
             # Convert to view model (clean separation)
             view = to_view(device)
 
-            # 🔥 NEW: Port Semantic Profile Display (协议语义可视化)
+            #  NEW: Port Intent Profile Display (网络意图可视化)
             self.port_role.setText(view.port_role_summary)
             self.port_role.setStyleSheet(view.port_role_badge)
 
-            # 🔥 NEW: 显示推断依据（让推理透明化）
-            if len(view.port_profile.reasons) <= 2:
-                # 推断依据较少时，直接显示
-                reasons_short = " | ".join(view.port_profile.reasons[:2])
-                self.port_role.setToolTip(f"推断依据:\n{chr(10).join(f'• {r}' for r in view.port_profile.reasons)}")
-            else:
-                # 推断依据较多时，显示前2个+省略号
-                reasons_short = " | ".join(view.port_profile.reasons[:2]) + " ..."
-                self.port_role.setToolTip(f"推断依据:\n{chr(10).join(f'• {r}' for r in view.port_profile.reasons)}")
-
-            # 🔥 让端口角色可点击查看推断依据
+            #  UX优化：让端口角色可点击查看推断依据
             self.port_role.setCursor(Qt.CursorShape.PointingHandCursor)
             # 使用lambda闭包保存当前设备引用
             self.port_role.mousePressEvent = lambda e, device=device: self._show_port_profile_details(e)
 
             # Log the inference
-            self.log(f"端口角色推断: {view.port_profile}", "INFO")
-            # 🔥 NEW: 显示设备类型推断
-            self.log(f"设备类型推断: {view.device_type} - 推断依据: {'; '.join(view.port_profile.reasons[:3])}", "INFO")
+            self.log(f"端口角色推断: {view.port_intent.role.value}", "INFO")
 
             # Protocol
             self.protocol.setText(view.protocol)
@@ -1174,328 +1379,6 @@ class LLDPProfessionalWindow(QWidget):
             except:
                 pass
 
-            # 🔥 MVVM架构：完全依赖ViewModel，消除冗余的协议判断逻辑
-            # view = to_view(device) 已经统一处理了LLDP和CDP的所有显示逻辑
-            # 直接使用view的字段进行UI更新，保持代码简洁和可维护性
-                # CDP device properties
-                cdp_device_id = getattr(device, 'device_id', None)
-                cdp_system_name = getattr(device, 'system_name', None)
-                cdp_platform = getattr(device, 'platform', None)
-
-                # Display system name (priority) or device ID
-                display_name = cdp_system_name or cdp_device_id or "未知CDP设备"
-                print(f"[DEBUG] Setting sw_name to (CDP): {display_name}")
-                self.sw_name.setText(display_name)
-
-                # Display platform
-                if cdp_platform:
-                    print(f"[DEBUG] Setting sw_model to (CDP): {cdp_platform}")
-                    self.sw_model.setText(cdp_platform)
-                else:
-                    self.sw_model.setText("未提供")
-
-                # For CDP, we don't have chassis_id, use device_id or "N/A"
-                self.sw_mac.setText("N/A (CDP协议)")
-                self.sw_type.setText("CDP")
-
-                # CDP doesn't typically provide serial number
-                self.sw_serial.setText("未提供")
-
-                # Software version for CDP
-                cdp_sw_version = getattr(device, 'software_version', None)
-                if cdp_sw_version:
-                    print(f"[DEBUG] Setting sw_software to (CDP): {cdp_sw_version[:100]}")
-                    self.sw_software.setText(cdp_sw_version[:100] + "..." if len(cdp_sw_version) > 100 else cdp_sw_version)
-                else:
-                    self.sw_software.setText("未提供")
-
-                # CDP doesn't have LLDP-MED
-                self.lldp_med.setText("N/A (CDP协议)")
-
-                # Management addresses for CDP
-                cdp_mgmt_addresses = getattr(device, 'management_addresses', None)
-                if cdp_mgmt_addresses and len(cdp_mgmt_addresses) > 0:
-                    # Get the first IPv4 address
-                    ipv4_address = next((addr.address for addr in cdp_mgmt_addresses if addr.address_type == "IPv4"), None)
-                    if ipv4_address:
-                        print(f"[DEBUG] Setting sw_ip to (CDP): {ipv4_address}")
-                        self.sw_ip.setText(ipv4_address)
-                    else:
-                        self.sw_ip.setText("未提供")
-                else:
-                    self.sw_ip.setText("未提供")
-
-            else:
-                # LLDP device properties (original logic)
-                if device.chassis_id:
-                    print(f"[DEBUG] Setting sw_mac to: {device.chassis_id.value}")
-                    self.sw_mac.setText(device.chassis_id.value)
-                    self.sw_type.setText(device.chassis_id.type.name)
-                else:
-                    self.sw_mac.setText("未提供")
-                    self.sw_type.setText("未知")
-
-                sys_name = device.system_name or "未知设备"
-                print(f"[DEBUG] Setting sw_name to: {sys_name}")
-                self.sw_name.setText(sys_name)
-
-                # Device model (extracted from system description or private TLV)
-                device_model = getattr(device, 'device_model', None) or getattr(device, 'product_model', None)
-                if device_model:
-                    print(f"[DEBUG] Setting sw_model to: {device_model}")
-                    self.sw_model.setText(device_model)
-                else:
-                    # Fallback: try to extract from system description
-                    if device.system_description:
-                        desc_lines = device.system_description.split('\n')
-                        for line in desc_lines:
-                            if 'H3C' in line and 'Comware' not in line and len(line.strip()) > 10:
-                                self.sw_model.setText(line.strip())
-                                break
-                        else:
-                            self.sw_model.setText("未提供")
-                    else:
-                        self.sw_model.setText("未提供")
-
-                # Serial number
-                serial_number = getattr(device, 'serial_number', None)
-                if serial_number:
-                    print(f"[DEBUG] Setting sw_serial to: {serial_number}")
-                    self.sw_serial.setText(serial_number)
-                else:
-                    self.sw_serial.setText("未提供")
-
-                # Software version
-                software_version = getattr(device, 'software_version', None)
-                if software_version:
-                    print(f"[DEBUG] Setting sw_software to: {software_version}")
-                    self.sw_software.setText(software_version)
-                else:
-                    self.sw_software.setText("未提供")
-
-                # Management address (IP)
-                mgmt_ip = device.management_ip or "未提供"
-                print(f"[DEBUG] Setting sw_ip to: {mgmt_ip}")
-                self.sw_ip.setText(mgmt_ip)
-
-                # LLDP-MED capabilities (only for LLDP)
-                lldp_med_caps = getattr(device, 'lldp_med_capabilities', None)
-                if lldp_med_caps and lldp_med_caps.get('capabilities'):
-                    med_text = " / ".join(lldp_med_caps['capabilities'])
-                    print(f"[DEBUG] Setting lldp_med to: {med_text}")
-                    self.lldp_med.setText(med_text)
-                else:
-                    self.lldp_med.setText("未提供")
-
-            # Port info - Enhanced for both LLDP and CDP
-            if is_cdp:
-                # CDP port info
-                cdp_port_id = getattr(device, 'port_id', None)
-                if cdp_port_id:
-                    print(f"[DEBUG] Setting port_id to (CDP): {cdp_port_id}")
-                    self.port_id.setText(cdp_port_id)
-                else:
-                    self.port_id.setText("未提供")
-
-                self.port_type.setText("CDP端口标识")
-
-                # CDP typically doesn't provide port description
-                self.port_desc.setText("未提供")
-
-            else:
-                # LLDP port info (original logic)
-                if device.port_id:
-                    print(f"[DEBUG] Setting port_id to: {device.port_id.value}")
-                    self.port_id.setText(device.port_id.value)
-                    self.port_type.setText(device.port_id.type.name)
-                else:
-                    self.port_id.setText("未提供")
-                    self.port_type.setText("未知")
-
-                port_desc = device.port_description or "未知"
-                print(f"[DEBUG] Setting port_desc to: {port_desc}")
-                self.port_desc.setText(port_desc)
-
-            # VLAN - Enhanced with CDP Native VLAN support!
-            if is_cdp:
-                # CDP device: Check for Native VLAN
-                native_vlan = getattr(device, 'native_vlan', None)
-                if native_vlan:
-                    vlan_text = f"{native_vlan} (Native VLAN)"
-                    self.port_vlan.setText(vlan_text)
-                    # Highlight Native VLAN - this is the key info from CDP!
-                    self.port_vlan.setStyleSheet("color:#10b981; font-weight:700; background:#d1fae5; padding:4px; border-radius:4px;")
-                    print(f"[DEBUG] 🔥🔥🔥 CDP Native VLAN displayed: {native_vlan}")
-                else:
-                    self.port_vlan.setText("未提供")
-                    self.port_vlan.setStyleSheet("")
-            else:
-                # LLDP device: Check multiple VLAN sources
-                vlan_found = False
-
-                # Priority 1: H3C private TLV (high confidence)
-                h3c_vlan = getattr(device, 'h3c_native_vlan', None)
-                if h3c_vlan:
-                    vlan_text = f"{h3c_vlan} (H3C私有TLV)"
-                    self.port_vlan.setText(vlan_text)
-                    self.port_vlan.setStyleSheet("color:#f59e0b; font-weight:600; background:#fef3c7; padding:4px; border-radius:4px;")
-                    print(f"[DEBUG] 🔥 H3C Private TLV VLAN displayed: {h3c_vlan}")
-                    vlan_found = True
-
-                # Priority 2: Standard LLDP port VLAN
-                elif device.port_vlan:
-                    vlan_text = f"{device.port_vlan.vlan_id}"
-
-                    # 添加VLAN名称（如果有）
-                    if hasattr(device.port_vlan, 'vlan_name') and device.port_vlan.vlan_name:
-                        vlan_text += f" ({device.port_vlan.vlan_name})"
-                    elif hasattr(device, 'vlans') and device.vlans:
-                        # 如果port_vlan没有vlan_name，从vlans列表中查找
-                        for v in device.vlans:
-                            if hasattr(v, 'vlan_id') and v.vlan_id == device.port_vlan.vlan_id:
-                                if hasattr(v, 'vlan_name') and v.vlan_name:
-                                    vlan_text += f" ({v.vlan_name})"
-                                    print(f"[DEBUG] Found VLAN name from vlans list: {v.vlan_name}")
-                                    break
-
-                    if hasattr(device.port_vlan, 'tagged') and device.port_vlan.tagged:
-                        vlan_text += " (Tagged)"
-                    else:
-                        vlan_text += " (Untagged)"
-
-                    self.port_vlan.setText(vlan_text)
-                    self.port_vlan.setStyleSheet("color:#22c55e; font-weight:600; background:#dcfce7; padding:4px; border-radius:4px;")
-                    print(f"[DEBUG] LLDP VLAN displayed: {vlan_text}")
-                    vlan_found = True
-
-                if not vlan_found:
-                    self.port_vlan.setText("未提供")
-                    self.port_vlan.setStyleSheet("")
-
-            # 协议VLAN ID (Protocol VLAN) - 新增
-            if hasattr(device, 'protocol_vlan_id') and device.protocol_vlan_id:
-                self.protocol_vlan.setText(f"{device.protocol_vlan_id}")
-                self.protocol_vlan.setStyleSheet("color:#8b5cf6; font-weight:600; background:#f3e8ff; padding:4px; border-radius:4px;")
-                print(f"[DEBUG] Protocol VLAN displayed: {device.protocol_vlan_id}")
-            else:
-                self.protocol_vlan.setText("未提供")
-                self.protocol_vlan.setStyleSheet("")
-
-            # MAC/PHY Configuration
-            if hasattr(device, 'macphy_config') and device.macphy_config:
-                macphy = device.macphy_config
-                if macphy.supported_speeds:
-                    # Display all supported speeds
-                    speeds_text = " / ".join(macphy.supported_speeds)
-                    self.macphy.setText(speeds_text)
-                elif macphy.speed:
-                    # Fallback to current speed if no supported list
-                    phy_text = f"{macphy.speed}"
-                    if macphy.duplex:
-                        phy_text += f" {macphy.duplex}"
-                    self.macphy.setText(phy_text)
-                elif device.autonegotiation and device.autonegotiation.get('supported'):
-                    self.macphy.setText("自动协商")
-                else:
-                    self.macphy.setText("未提供")
-            else:
-                self.macphy.setText("未提供")
-
-            # Link Aggregation
-            if hasattr(device, 'link_aggregation') and device.link_aggregation:
-                link_agg = device.link_aggregation
-                if not link_agg.supported:
-                    self.link_agg.setText("不支持")
-                elif link_agg.enabled:
-                    agg_text = "已启用"
-                    if link_agg.aggregation_id:
-                        agg_text += f" (组ID: {link_agg.aggregation_id})"
-                    self.link_agg.setText(agg_text)
-                else:
-                    self.link_agg.setText("支持")
-            else:
-                self.link_agg.setText("未提供")
-
-            # Maximum Frame Size (MTU)
-            if device.max_frame_size:
-                mtu_text = f"{device.max_frame_size} 字节"
-                self.mtu.setText(mtu_text)
-            else:
-                self.mtu.setText("未提供")
-
-            # PoE
-            if hasattr(device, 'poe') and device.poe and device.poe.supported:
-                poe_parts = []
-
-                # 电源类型
-                if device.poe.power_source:
-                    if 'PSE' in device.poe.power_source:
-                        poe_parts.append("供电设备")
-                    elif 'PD' in device.poe.power_source:
-                        poe_parts.append("受电设备")
-
-                # 功率信息
-                if device.poe.power_allocated:
-                    power_w = device.poe.power_allocated / 1000
-                    if power_w >= 1:
-                        poe_parts.append(f"{power_w:.1f}W")
-                    else:
-                        poe_parts.append(f"{device.poe.power_allocated}mW")
-
-                # 优先级
-                if device.poe.power_priority:
-                    poe_parts.append(f"优先级:{device.poe.power_priority}")
-
-                # 类型和等级
-                if device.poe.power_class:
-                    poe_parts.append(f"({device.poe.power_class})")
-                if device.poe.power_type:
-                    poe_parts.append(f"[{device.poe.power_type}]")
-
-                self.poe.setText(" / ".join(poe_parts))
-            else:
-                self.poe.setText("不支持")
-
-            # Capabilities - 显示所有支持的能力
-            if hasattr(device, 'capabilities') and device.capabilities:
-                all_caps = device.capabilities.get_all_capabilities()
-                print(f"[DEBUG UI] All capabilities to display: {all_caps}")
-                if all_caps:
-                    cap_text = " / ".join(all_caps)
-                    self.capabilities.setText(cap_text)
-                    print(f"[DEBUG UI] Set capabilities text to: {cap_text}")
-                else:
-                    self.capabilities.setText("未知")
-                    print(f"[DEBUG UI] No capabilities found, showing '未知'")
-            else:
-                self.capabilities.setText("未知")
-                print(f"[DEBUG UI] No capabilities object, showing '未知'")
-
-            # Update status
-            status_text = f"已发现: {device.get_display_name()}"
-            print(f"[DEBUG] Setting status_label to: {status_text}")
-            self.status_label.setText(status_text)
-
-            print(f"[DEBUG] UI update completed successfully")
-
-        except Exception as e:
-            print(f"[ERROR] Failed to update display: {e}")
-            import traceback
-            traceback.print_exc()
-
-            # 🔥 安全的错误显示，防止二次崩溃
-            try:
-                self.sw_name.setText("显示错误")
-                self.sw_mac.setText(str(e)[:50])
-                self.log(f"UI更新失败: {str(e)}", "ERROR")
-            except Exception as e2:
-                print(f"[ERROR] Even error display failed: {e2}")
-                # 最后的错误记录
-                with open("lldp_ui_error.txt", "a", encoding="utf-8") as f:
-                    f.write(f"UI Update Error: {e}\n")
-                    f.write(f"Error Display Error: {e2}\n")
-                    traceback.print_exc(file=f)
-
     def update_progress(self):
         """Update progress bar - Optimized for minimal CPU usage"""
         try:
@@ -1522,7 +1405,7 @@ class LLDPProfessionalWindow(QWidget):
             pass
 
     def _show_port_profile_details(self, event):
-        """🔥 ENHANCED: Show port profile and device type inference details dialog"""
+        """Show port profile inference details dialog"""
         if not hasattr(self, 'current_device') or not self.current_device:
             return
 
@@ -1530,41 +1413,44 @@ class LLDPProfessionalWindow(QWidget):
             from lldp.view_model import to_view
             view = to_view(self.current_device)
 
-            # 🔥 ENHANCED: 创建专业推断依据对话框
+            # 创建推断依据对话框
             dialog = QMessageBox(self)
-            dialog.setWindowTitle("语义推断详情 - LLDP Analyzer v2")
+            dialog.setWindowTitle("端口角色推断依据")
 
-            # 🔥 专业UI：根据置信度和设备类型设置图标
-            confidence = view.port_profile.confidence
-            device_type = view.device_type
-
-            # 🔥 NEW: 组合显示端口角色和设备类型
+            #  专业UI：根据置信度设置图标
+            confidence = view.port_intent.confidence
             if confidence >= 90:
                 icon = QMessageBox.Icon.Information
-                title = f"🎯 {view.port_role_summary} / {device_type}"
+                title = f"🎯 {view.port_role_summary}"
             elif confidence >= 70:
                 icon = QMessageBox.Icon.Warning
-                title = f"📊 {view.port_role_summary} / {device_type}"
+                title = f"[分析] {view.port_role_summary}"
             else:
                 icon = QMessageBox.Icon.Question
-                title = f"🔍 {view.port_role_summary} / {device_type}"
+                title = f"[详情] {view.port_role_summary}"
 
             dialog.setIcon(icon)
             dialog.setText(title)
 
-            # 🔥 ENHANCED: 显示完整的推断信息
-            details = f"🔍 端口角色: {view.port_profile.role.value}\n"
-            details += f"🏢️ 设备类型: {device_type}\n"
-            details += f"📊 置信度: {view.port_profile.confidence}%\n\n"
-            details += "📋 推断依据：\n"
-            for i, reason in enumerate(view.port_profile.reasons, 1):
-                details += f"{i}. {reason}\n"
+            # 推断依据详情 - 增强版：显示网络意图分析
+            evidence_text = "TLV证据：\n\n"
+            for i, evidence in enumerate(view.port_intent.tlv_evidence, 1):
+                evidence_text += f"{i}. {evidence}\n"
 
-            dialog.setDetailedText(details)
+            # 添加运维洞察和配置建议
+            insight_text = f"\n运维洞察:\n{view.port_intent.operational_insight}\n\n"
+            insight_text += f"配置建议:\n{view.port_intent.configuration_suggestion}"
+
+            if view.port_intent.auto_discovery_issues:
+                insight_text += f"\n\n发现问题:\n"
+                for issue in view.port_intent.auto_discovery_issues:
+                    insight_text += f"• {issue}\n"
+
+            dialog.setDetailedText(evidence_text + insight_text)
             dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
 
-            # 🔥 专业UI：根据设备类型和置信度设置对话框样式
-            role = view.port_profile.role
+            #  UX：根据端口角色设置对话框样式
+            role = view.port_intent.role
             if role.value in ["Core Infrastructure", "Uplink (LAG)"]:
                 dialog.setStyleSheet("""
                     QMessageBox {
@@ -1574,12 +1460,6 @@ class LLDPProfessionalWindow(QWidget):
                         color: #5b21b6;
                         font-weight: bold;
                         font-size: 14px;
-                    }
-                    QPushButton {
-                        background: #8b5cf6;
-                        color: white;
-                        border-radius: 4px;
-                        padding: 6px 12px;
                     }
                 """)
             elif role.value == "Anomaly Detected":
@@ -1592,29 +1472,6 @@ class LLDPProfessionalWindow(QWidget):
                         font-weight: bold;
                         font-size: 14px;
                     }
-                    QPushButton {
-                        background: #ef4444;
-                        color: white;
-                        border-radius: 4px;
-                        padding: 6px 12px;
-                    }
-                """)
-            elif device_type in ["Wireless AP", "VoIP Phone"]:
-                dialog.setStyleSheet("""
-                    QMessageBox {
-                        background: #d1fae5;
-                    }
-                    QLabel {
-                        color: #065f46;
-                        font-weight: bold;
-                        font-size: 14px;
-                    }
-                    QPushButton {
-                        background: #10b981;
-                        color: white;
-                        border-radius: 4px;
-                        padding: 6px 12px;
-                    }
                 """)
             else:
                 dialog.setStyleSheet("""
@@ -1626,12 +1483,6 @@ class LLDPProfessionalWindow(QWidget):
                         font-weight: bold;
                         font-size: 14px;
                     }
-                    QPushButton {
-                        background: #64748b;
-                        color: white;
-                        border-radius: 4px;
-                        padding: 6px 12px;
-                    }
                 """)
 
             dialog.exec()
@@ -1642,8 +1493,8 @@ class LLDPProfessionalWindow(QWidget):
             traceback.print_exc()
 
     def export_data(self):
-        """Export discovered devices"""
-        # 🔥 检查是否有设备可导出
+        """Export discovered devices - with format auto-completion"""
+        #  检查是否有设备可导出
         if not self.discovered_devices:
             QMessageBox.warning(self, "警告",
                 "没有可导出的设备数据！\n\n"
@@ -1660,17 +1511,36 @@ class LLDPProfessionalWindow(QWidget):
 
         # Ask for save location and format
         file_filter = "JSON Files (*.json);;CSV Files (*.csv);;Text Files (*.txt)"
+        default_filename = f"lldp_devices_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
         file_path, selected_filter = QFileDialog.getSaveFileName(
             self,
             "导出LLDP设备信息",
-            f"lldp_devices_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            default_filename,
             file_filter
         )
 
         if not file_path:
             return
 
+        # 优化4: 自动补全文件扩展名（如果用户没有手动输入）
+        if not any(file_path.endswith(ext) for ext in ['.json', '.csv', '.txt']):
+            # 根据选择的过滤器自动添加扩展名
+            if 'JSON' in selected_filter:
+                file_path += '.json'
+            elif 'CSV' in selected_filter:
+                file_path += '.csv'
+            elif 'Text' in selected_filter:
+                file_path += '.txt'
+            else:
+                # 默认使用json
+                file_path += '.json'
+
         try:
+            # 优化D: 设置等待光标，提供用户反馈
+            QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+            self.status_label.setText("正在导出数据...")
+
             # Export based on file extension
             if file_path.endswith('.json'):
                 self._export_json(file_path)
@@ -1687,6 +1557,11 @@ class LLDPProfessionalWindow(QWidget):
             import traceback
             traceback.print_exc()
 
+        finally:
+            # 优化D: 恢复光标和状态
+            QApplication.restoreOverrideCursor()
+            self.status_label.setText("导出完成")
+
     def _export_json(self, file_path: str):
         """Export to JSON format - using ViewModel with PortProfile"""
         data = {
@@ -1698,10 +1573,13 @@ class LLDPProfessionalWindow(QWidget):
         for device in self.discovered_devices:
             view = to_view(device)
             device_data = {
-                # 🔥 NEW: Port Semantic Profile
-                'port_role': view.port_profile.role.value,
-                'port_confidence': view.port_profile.confidence,
-                'port_reasons': view.port_profile.reasons,
+                #  NEW: Port Semantic Profile
+                'port_role': view.port_intent.role.value,
+                'port_confidence': view.port_intent.confidence,
+                'network_intent': view.port_intent.intent.value if view.port_intent.intent else '未知',
+                'tlv_evidence': view.port_intent.tlv_evidence,
+                'operational_insight': view.port_intent.operational_insight,
+                'configuration_suggestion': view.port_intent.configuration_suggestion,
                 # Original fields
                 'system_name': view.system_name,
                 'mac': view.mac,
@@ -1726,21 +1604,22 @@ class LLDPProfessionalWindow(QWidget):
         """Export to CSV format - using ViewModel with PortProfile"""
         import csv
 
-        # 🔥 修复编码：使用utf-8-sig确保Windows Excel正确识别UTF-8
+        #  修复编码：使用utf-8-sig确保Windows Excel正确识别UTF-8
         with open(file_path, 'w', encoding='utf-8-sig', newline='') as f:
             writer = csv.writer(f)
 
-            # 🔥 语义导出：Header包含语义信息而非原始字段
+            #  NEW: Header with port role
             writer.writerow([
-                '端口角色', '设备类型', '置信度', '推断依据',
-                '系统名称', '管理IP', '端口语义', '设备语义'
+                '端口角色', '置信度', '推断依据',
+                '系统名称', '设备MAC', '端口ID', '端口描述',
+                '管理IP', 'VLAN', '速率/双工', '链路聚合', '最大帧长', 'PoE', '系统描述'
             ])
 
-            # Data rows - using ViewModel with semantic export
+            # Data rows - using ViewModel
             for device in self.discovered_devices:
                 view = to_view(device)
 
-                # 🔥 CSV健壮性：清理特殊字符，防止Excel行序错乱
+                #  CSV健壮性：清理特殊字符，防止Excel行序错乱
                 def clean_csv_field(text):
                     """清理CSV字段中的特殊字符"""
                     if not text:
@@ -1752,30 +1631,24 @@ class LLDPProfessionalWindow(QWidget):
                     text = ''.join(char for char in text if ord(char) >= 32 or char in ' \n\r\t')
                     return text.strip()
 
-                # 🔥 语义导出：根据设备类型和端口角色生成语义描述
-                device_semantic = f"{view.device_type} - {view.port_profile.role.value}"
-
-                # 🔥 NEW: 生成端口语义描述
-                if view.port_profile.role.value == "Trunk":
-                    port_semantic = "Trunk (承载多VLAN)"
-                elif view.port_profile.role.value == "Access":
-                    port_semantic = "Access (单一VLAN接入)"
-                elif view.port_profile.role.value in ["Uplink", "Uplink (LAG)"]:
-                    port_semantic = "上联口 (核心层连接)"
-                else:
-                    port_semantic = view.port_profile.role.value
-
                 writer.writerow([
-                    # 🔥 语义导出：端口角色 + 设备类型 + 推断依据
-                    clean_csv_field(view.port_profile.role.value),
-                    clean_csv_field(view.device_type),
-                    f"{view.port_profile.confidence}%",
-                    clean_csv_field(" / ".join(view.port_profile.reasons)),
-                    # 关键字段（其他可从推断依据获取）
+                    #  NEW: Port Semantic Profile
+                    clean_csv_field(view.port_intent.role.value),
+                    f"{view.port_intent.confidence}%",
+                    clean_csv_field(view.port_intent.intent.value if view.port_intent.intent else '未知'),
+                    clean_csv_field(" / ".join(view.port_intent.tlv_evidence)),
+                    # Original fields with special character cleaning
                     clean_csv_field(view.system_name),
+                    clean_csv_field(view.mac),
+                    clean_csv_field(view.port_id),
+                    clean_csv_field(view.port_desc),
                     clean_csv_field(view.ip),
-                    clean_csv_field(port_semantic),
-                    clean_csv_field(device_semantic)
+                    clean_csv_field(view.vlan),
+                    clean_csv_field(view.macphy),
+                    clean_csv_field(view.link_agg),
+                    clean_csv_field(view.mtu),
+                    clean_csv_field(view.poe),
+                    clean_csv_field((safe_get(device, 'system_description') or '—')[:30])
                 ])
 
     def _export_text(self, file_path: str):
@@ -1794,12 +1667,20 @@ class LLDPProfessionalWindow(QWidget):
                 f.write(f"设备 #{i}\n")
                 f.write("-"*70 + "\n")
 
-                # 🔥 NEW: Port Semantic Profile
-                f.write(f"【端口角色】{view.port_profile.role.value}\n")
-                f.write(f"【置信度】{view.port_profile.confidence}%\n")
-                f.write(f"【推断依据】\n")
-                for reason in view.port_profile.reasons:
-                    f.write(f"  - {reason}\n")
+                #  NEW: Port Intent Profile (Network Intent Analysis)
+                f.write(f"【端口角色】{view.port_intent.role.value}\n")
+                f.write(f"【网络意图】{view.port_intent.intent.value if view.port_intent.intent else '未知'}\n")
+                f.write(f"【置信度】{view.port_intent.confidence}%\n")
+                f.write(f"【受管设备】{'是' if view.port_intent.is_managed else '否'}\n")
+                f.write(f"\n【TLV证据】\n")
+                for evidence in view.port_intent.tlv_evidence:
+                    f.write(f"  • {evidence}\n")
+                f.write(f"\n【运维洞察】\n{view.port_intent.operational_insight}\n")
+                f.write(f"\n【配置建议】\n{view.port_intent.configuration_suggestion}\n")
+                if view.port_intent.auto_discovery_issues:
+                    f.write(f"\n【发现问题】\n")
+                    for issue in view.port_intent.auto_discovery_issues:
+                        f.write(f"  • {issue}\n")
                 f.write("\n")
 
                 # Device Info
@@ -1817,55 +1698,106 @@ class LLDPProfessionalWindow(QWidget):
                 f.write("\n")
 
     def closeEvent(self, event):
-        """Window close event - cleanup resources"""
+        """
+        Window close event - 线程安全的资源清理
+
+        优化: 确保线程安全退出，防止资源泄漏和竞态条件
+        """
         try:
-            # Stop DEBUG log timer
+            # 优化1: 防止重复关闭
+            if hasattr(self, '_is_closing'):
+                if self._is_closing:
+                    event.accept()
+                    return
+            self._is_closing = True
+
+            self.log("正在关闭应用...", "INFO")
+
+            # 优化2: 按正确顺序停止定时器（先停止生产者，再停止消费者）
             if hasattr(self, 'debug_log_timer') and self.debug_log_timer:
                 self.debug_log_timer.stop()
 
-            # Stop capture
-            if hasattr(self, 'listener') and self.listener:
-                self.listener.stop()
-
-            # Stop progress timer
             if hasattr(self, 'progress_timer') and self.progress_timer:
                 self.progress_timer.stop()
 
+            # 优化3: 安全停止网络监听器（等待线程完全退出）
+            if hasattr(self, 'listener') and self.listener:
+                self.listener.stop()
+                # 等待监听器线程完全退出（防止竞态条件）
+                if hasattr(self.listener, 'thread') and self.listener.thread:
+                    wait_time = 0
+                    while self.listener.thread.is_alive() and wait_time < 2000:  # 最多等待2秒
+                        QApplication.processEvents()
+                        import time
+                        time.sleep(0.1)
+                        wait_time += 100
+                    if self.listener.thread.is_alive():
+                        self.log("警告: 监听器线程未能在2秒内退出", "WARNING")
+
+            # 优化4: 处理剩余的日志队列（防止日志丢失）
+            if hasattr(self, 'debug_log_queue') and self.debug_log_queue:
+                queue_size = len(self.debug_log_queue)
+                if queue_size > 0:
+                    self.log(f"处理剩余日志条目: {queue_size} 条", "INFO")
+                    self._process_debug_log_queue()
+
+            # 优化5: 保存配置（如果需要）
+            # 这里可以添加保存用户偏好设置的逻辑
+
+            self.log("应用已安全关闭", "SUCCESS")
             event.accept()
+
         except Exception as e:
             print(f"[ERROR] Cleanup failed: {e}")
+            import traceback
+            traceback.print_exc()
+            # 即使清理失败，也允许关闭窗口（防止卡死）
             event.accept()
 
 
 def main():
-    """Main entry point"""
+    """Main entry point - with High DPI support"""
     try:
+        # 优化5: 启用高DPI支持（高分屏适配）
+        # 这必须在创建QApplication之前设置
+        import os
+        os.environ['QT_AUTO_SCREEN_SCALE_FACTOR'] = '1'
+        os.environ['QT_ENABLE_HIGHDPI_SCALING'] = '1'
+        os.environ['QT_SCALE_FACTOR'] = '1'
+
+        # 在PyQt6中，High DPI支持默认启用，但我们可以设置一些属性
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import Qt
+
         app = QApplication(sys.argv)
+
+        # PyQt6的高DPI支持是自动启用的，无需手动设置
         app.setStyle("Fusion")
 
-        # 🔥 设置应用程序图标（任务栏和窗口标题栏）
+        #  设置应用程序图标（任务栏和窗口标题栏）
         from PyQt6.QtGui import QIcon
-        import os
 
-        # 查找图标文件（支持开发环境和打包后环境）
+        # 查找图标文件 - 使用pathlib.Path（优化C）
         meipass = getattr(sys, '_MEIPASS', '')
+        current_dir = Path(__file__).parent.parent
+
         icon_paths = [
             # 开发环境：使用相对路径
-            os.path.join(os.path.dirname(os.path.dirname(__file__)), 'lldp_icon.png'),
-            os.path.join(os.path.dirname(os.path.dirname(__file__)), 'lldp_icon.ico'),
+            current_dir / 'lldp_icon.png',
+            current_dir / 'lldp_icon.ico',
             # 打包后：在sys._MEIPASS中查找
-            os.path.join(meipass, 'lldp_icon.png'),
-            os.path.join(meipass, 'lldp_icon.ico'),
+            Path(meipass) / 'lldp_icon.png',
+            Path(meipass) / 'lldp_icon.ico',
             # 当前目录
-            'lldp_icon.png',
-            'lldp_icon.ico',
+            Path('lldp_icon.png'),
+            Path('lldp_icon.ico'),
         ]
 
         icon_loaded = False
         for icon_path in icon_paths:
-            if os.path.exists(icon_path):
+            if icon_path.exists():
                 try:
-                    app_icon = QIcon(icon_path)
+                    app_icon = QIcon(str(icon_path))  # QIcon需要字符串路径
                     app.setWindowIcon(app_icon)
                     icon_loaded = True
                     break
@@ -1876,7 +1808,7 @@ def main():
             # 如果图标文件不存在，使用默认图标
             pass
 
-        # 🔥 添加全局异常处理器，防止程序静默崩溃
+        #  添加全局异常处理器，防止程序静默崩溃
         def handle_exception(exc_type, exc_value, exc_traceback):
             """全局异常处理器"""
             import traceback
@@ -1926,7 +1858,7 @@ def main():
         import traceback
         traceback.print_exc()
 
-        # 🔥 保存错误信息
+        #  保存错误信息
         try:
             import datetime
             error_log = f"lldp_analyzer_fatal_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
@@ -1937,7 +1869,7 @@ def main():
         except:
             pass
 
-        # 🔥 在GUI环境中显示错误对话框
+        #  在GUI环境中显示错误对话框
         try:
             # 检查是否已经有QApplication实例
             app_instance = QApplication.instance()

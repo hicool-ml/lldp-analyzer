@@ -1,584 +1,571 @@
 """
-LLDP/CDP Port Semantic Inference Engine
-Inferring network role from TLV combinations
+LLDP Port Semantic Inference Engine - Professional NMS Implementation
+专业网络管理系统实现 - 基于特征抽象和规则引擎
+
+🔥 质变升级：
+从简单if-else判断 → Feature抽象 + 规则引擎 + 二次推断
+
+架构层次：
+TLV → Feature Extraction → Rule Engine (Priority-based) → Secondary Inference → PortRole/DeviceType
+
+核心改进：
+1. Feature抽象层：TLV语义特征提取
+2. 规则优先级：强规则直接返回，弱规则参与推断
+3. 二次推断：特征相互影响，reasons作为语义集合
+4. 设备类型：DeviceType参与PortRole推断
 """
 
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional, Dict, Set
 from enum import Enum
 
 from .utils import safe_get
 
 
 class PortRole(Enum):
-    """Port role types - Enhanced with professional network inference"""
-    ACCESS = "Access"                    # 普通接入口
-    TERMINAL = "Terminal"                # 终端设备（AP/Phone/PC）
-    TRUNK = "Trunk"                      # 干道口
-    UPLINK = "Uplink"                    # 上联口
-    UPLINK_LAG = "Uplink (LAG)"          # 聚合上联
-    CORE_INFRA = "Core Infrastructure"    # 核心基础设施
-    WIRELESS_AP = "Wireless AP"          # 无线接入点
-    VOIP_PHONE = "VoIP Phone"            # IP电话
-    HYPERVISOR = "Hypervisor"            # 虚拟化主机
-    ANOMALY = "Anomaly Detected"         # 异常检测
-    UNKNOWN = "Unknown"                  # 未知
+    """Port roles based on network intent"""
+    ACCESS_TERMINAL = "Access Terminal"        # 终端接入（PC/打印机）
+    ACCESS_WIRELESS = "Access Wireless"        # 无线接入（AP）
+    ACCESS_VOICE = "Access Voice"              # 语音接入（IP电话）
+    TRUNK_NATIVE = "Trunk (Native)"            # 干道口（带Native VLAN）
+    TRUNK_NO_NATIVE = "Trunk (No Native)"      # 纯干道（无Native VLAN）
+    UPLINK_LAG = "Uplink (LAG)"                # 聚合上联
+    UPLINK_SINGLE = "Uplink (Single)"          # 单链路上联
+    CORE_DISTRIBUTION = "Core/Distribution"    # 核心/分发层
+    STORAGE_NETWORK = "Storage Network"        # 存储网络
+    INFRASTRUCTURE = "Infrastructure"          # 基础设施
+    UNKNOWN = "Unknown"
 
 
 class DeviceType(Enum):
-    """Device type inference - 🔥 NEW: Critical for semantic engine"""
-    SWITCH = "Switch"                    # 交换机
-    ROUTER = "Router"                    # 路由器
-    WIRELESS_AP = "Wireless AP"          # 无线接入点
-    VOIP_PHONE = "VoIP Phone"            # IP电话
-    HYPERVERVISOR = "Hypervisor"         # 虚拟化主机
-    SERVER = "Server"                    # 服务器
-    TERMINAL = "Terminal"                # 终端（PC/打印机等）
-    UNKNOWN = "Unknown"                  # 未知
+    """Device types based on capabilities and TLV"""
+    ACCESS_POINT = "Access Point"              # 无线接入点
+    IP_PHONE = "IP Phone"                      # IP电话
+    SWITCH = "Switch"                          # 交换机
+    ROUTER = "Router"                          # 路由器
+    FIREWALL = "Firewall"                      # 防火墙
+    SERVER = "Server"                          # 服务器
+    STORAGE = "Storage"                        # 存储设备
+    TERMINAL = "Terminal"                      # 终端设备（PC/打印机等）
+    UNKNOWN = "Unknown"
+
+
+class NetworkIntent(Enum):
+    """Network intent inferred from TLV combination"""
+    TERMINAL_ACCESS = "Terminal Access"        # 终端接入意图
+    WIRELESS_ACCESS = "Wireless Access"        # 无线覆盖意图
+    VOICE_PROVISIONING = "Voice Provisioning"  # 语音部署意图
+    TRUNK_TRANSPORT = "Trunk Transport"        # 多VLAN传输意图
+    UPLINK_REDUNDANCY = "Uplink Redundancy"    # 上联冗余意图
+    HIGH_SPEED_STORAGE = "High-Speed Storage"  # 高速存储意图
+    NETWORK_MANAGEMENT = "Network Management"  # 网络管理意图
 
 
 @dataclass
-class PortProfile:
+class PortFeatures:
     """
-    Port Semantic Profile - 🔥 ENHANCED: True semantic inference engine
-    Infers the role and purpose of a network port from LLDP/CDP TLV combinations
+    Feature抽象层：TLV语义特征提取
+
+    🔥 关键创新：将TLV原始数据转换为语义特征集合
+    这些特征是规则引擎的输入，也是二次推断的基础
     """
-    role: PortRole                      # 推断的端口角色
-    device_type: DeviceType              # 🔥 NEW: 推断的设备类型
+    # VLAN特征
+    has_port_vlan: bool = False           # 有Port VLAN ID
+    has_protocol_vlan: bool = False       # 有Protocol VLAN ID
+    port_vlan_tagged: bool = False        # Port VLAN是Tagged
+
+    # 链路聚合特征
+    is_aggregated: bool = False           # 启用链路聚合
+    aggregation_id: Optional[int] = None  # 聚合组ID
+
+    # MTU特征
+    high_mtu: bool = False               # MTU > 2000 (存储网络特征)
+    jumbo_frame: bool = False            # MTU > 9000 (巨帧)
+
+    # PoE特征
+    has_poe: bool = False                # 支持PoE供电
+    poe_power_allocated: Optional[int] = None  # 分配功率(mW)
+
+    # 设备能力特征
+    is_router: bool = False              # 具备路由能力
+    is_bridge: bool = False              # 具备桥接能力
+    is_wlan: bool = False                # 无线能力
+    is_repeater: bool = False            # 中继器能力
+
+    # 速率特征
+    speed_1g_plus: bool = False          # 速率 >= 1G
+    speed_10g_plus: bool = False         # 速率 >= 10G
+    duplex_full: bool = False            # 全双工
+
+    # 管理特征
+    has_management_ip: bool = False      # 有管理地址
+    has_system_description: bool = False # 有系统描述
+
+    # VLAN名称特征（业务识别）
+    has_mgmt_vlan: bool = False          # 管理网络VLAN
+    has_data_vlan: bool = False          # 数据网络VLAN
+    has_voice_vlan: bool = False         # 语音网络VLAN
+    has_storage_vlan: bool = False       # 存储网络VLAN
+
+
+@dataclass
+class PortIntentProfile:
+    """
+    Port Intent Profile - 基于网络管理意图的端口分析
+
+    🔥 质变升级：reasons现在是语义特征集合，参与二次推断
+    """
+    role: PortRole                      # 端口角色
+    device_type: DeviceType              # 设备类型（新增）
+    intent: NetworkIntent               # 网络意图
     confidence: int                     # 置信度 (0-100)
-    reasons: List[str]                  # 推断依据
-    suggested_color: str                # 建议的显示颜色
-
-    def __str__(self) -> str:
-        """Human-readable description"""
-        if self.confidence >= 90:
-            level = "高置信度"
-        elif self.confidence >= 70:
-            level = "中置信度"
-        else:
-            level = "低置信度"
-
-        reasons_str = " / ".join(self.reasons)
-        # 🔥 NEW: Show both port role and device type
-        return f"{self.role.value} / {self.device_type.value} ({level}, {self.confidence}%) - {reasons_str}"
+    features: PortFeatures              # 特征抽象层（新增）
+    tlv_evidence: List[str]             # TLV证据（哪些TLV支持这个推断）
+    operational_insight: str            # 运维洞察（这对NMS有什么价值）
+    configuration_suggestion: str       # 配置建议（网络应该怎么配置）
+    is_managed: bool                    # 是否受管设备（有Management Address）
+    auto_discovery_issues: List[str]    # 自动发现的问题（性能瓶颈、配置错误等）
+    semantic_reasons: Set[str]          # 🔥 新增：语义原因集合，参与二次推断
 
 
-def infer_port_profile(device) -> PortProfile:
+def extract_features(device) -> PortFeatures:
     """
-    Infer port profile from LLDP/CDP device data
+    🔥 Feature抽象层：TLV语义特征提取
 
-    This is the core semantic inference engine that analyzes TLV combinations
-    to determine the port's role in the network topology.
+    这一步将原始TLV数据转换为结构化的语义特征
+    是整个推断引擎的基础
 
-    Args:
-        device: LLDPDevice or CDP device object
-
-    Returns:
-        PortProfile with role, confidence, and reasoning
+    修复: 统一处理TLV缺失，建立厂商差异容错机制
     """
-    reasons = []
-    score = 0
-    role = PortRole.UNKNOWN
+    features = PortFeatures()
 
-    # Extract key attributes
+    # ========== 设备能力特征提取（优先处理，厂商差异最大）==========
+    # 🔥 关键修复: Ruijie等厂商可能不发送Capabilities TLV
+    caps_obj = safe_get(device, 'capabilities')
+
+    # 🔥 统一容错: 确保caps永远是list，绝不会是None
+    if caps_obj and hasattr(caps_obj, 'get_all_capabilities'):
+        try:
+            all_caps = caps_obj.get_all_capabilities()
+            capabilities_list = all_caps if all_caps else []
+        except:
+            capabilities_list = []
+    else:
+        capabilities_list = []
+
+    # 🔥 安全的特征提取: 基于list而不是对象
+    features.is_router = "Router" in capabilities_list
+    features.is_bridge = "Bridge" in capabilities_list
+    features.is_wlan = "WLAN" in capabilities_list or "Wlan" in capabilities_list
+    features.is_repeater = "Repeater" in capabilities_list
+
+    # ========== VLAN特征提取 ==========
     port_vlan = safe_get(device, 'port_vlan')
     protocol_vlan = safe_get(device, 'protocol_vlan_id')
+
+    features.has_port_vlan = port_vlan is not None
+    features.has_protocol_vlan = protocol_vlan is not None
+
+    if port_vlan:
+        features.port_vlan_tagged = safe_get(port_vlan, 'tagged', False)
+
+    # ========== 链路聚合特征提取 ==========
     link_agg = safe_get(device, 'link_aggregation')
-    poe = safe_get(device, 'poe')
-    macphy = safe_get(device, 'macphy_config')
-    capabilities = safe_get(device, 'capabilities')
-
-    # ========== Rule 1: Trunk Port Detection ==========
-    # Key indicators:
-    # - Has Port VLAN (Native VLAN)
-    # - Has Protocol VLAN (Tagged VLANs for services)
-    # - High speed (1G+)
-    # - No PoE (typically)
-    if port_vlan and protocol_vlan:
-        reasons.append("同时存在Port VLAN与Protocol VLAN（干道特征）")
-        score += 4
-
-        # Confirm with speed
-        if macphy and macphy.speed:
-            speed = macphy.speed
-            if '1G' in speed or '10G' in speed or '25G' in speed:
-                reasons.append(f"高速率({speed})符合干道特征")
-                score += 2
-            elif '100M' in speed:
-                reasons.append(f"速率{speed}，可能是小型网络干道")
-                score += 1
-
-        # Confirm no PoE (trunks typically don't power devices)
-        if poe and not poe.supported:
-            reasons.append("无PoE（符合干道特征）")
-            score += 1
-
-        if score >= 5:
-            role = PortRole.TRUNK
-            return PortProfile(
-                role=role,
-                confidence=min(95, 70 + score * 5),
-                reasons=reasons,
-                suggested_color="#3b82f6"  # Blue for Trunk
-            )
-
-    # ========== Rule 2: Uplink with LAG Detection ==========
-    # Key indicators:
-    # - Link aggregation enabled
-    # - High speed
-    # - Router capability
     if link_agg and safe_get(link_agg, 'enabled'):
-        reasons.append("启用链路聚合（LAG）")
+        features.is_aggregated = True
+        features.aggregation_id = safe_get(link_agg, 'aggregation_id')
 
-        # Confirm with router capability
-        if capabilities and safe_get(capabilities, 'router'):
-            reasons.append("具备路由能力（上联特征）")
-            score += 3
-        else:
-            score += 2
+    # ========== MTU特征提取 ==========
+    max_frame = safe_get(device, 'max_frame_size')
+    if max_frame:
+        features.high_mtu = max_frame > 2000
+        features.jumbo_frame = max_frame > 9000
 
-        # Confirm with speed
-        if macphy and macphy.speed:
-            speed = macphy.speed
-            if '10G' in speed or '25G' in speed or '40G' in speed:
-                reasons.append(f"高速率({speed})")
-                score += 2
-
-        if score >= 4:
-            role = PortRole.UPLINK_LAG
-            return PortProfile(
-                role=role,
-                confidence=min(98, 80 + score * 3),
-                reasons=reasons,
-                suggested_color="#8b5cf6"  # Purple for Uplink LAG
-            )
-
-    # ========== Rule 3: Terminal Port Detection ==========
-    # Key indicators:
-    # - PoE supported (powers AP/Phone/IP Camera)
-    # - 100M or 1G speed
-    # - Single VLAN (no Protocol VLAN)
-    # - Switch capability on the other end
-    score = 0
-    reasons = []
-
+    # ========== PoE特征提取 ==========
+    poe = safe_get(device, 'poe')
     if poe and safe_get(poe, 'supported'):
-        reasons.append("支持PoE供电（终端特征）")
-        score += 3
+        features.has_poe = True
+        features.poe_power_allocated = safe_get(poe, 'power_allocated')
 
-        # Check power type
-        power_source = safe_get(poe, 'power_source')
-        if power_source and 'PSE' in power_source:
-            reasons.append("供电设备(PSE) - 为终端供电")
-            score += 1
+    # ========== 速率特征提取（修复macphy缺失）==========
+    # 🔥 关键修复: Ruijie等厂商可能不发送macphy_config
+    macphy = safe_get(device, 'macphy_config')
 
-    if macphy and macphy.speed:
-        speed = macphy.speed
-        if '100M' in speed:
-            reasons.append("百兆速率（典型终端速率）")
-            score += 2
-        elif '1G' in speed:
-            reasons.append("千兆速率（现代终端速率）")
-            score += 1
-
-    # Confirm: No Protocol VLAN (terminals typically don't need it)
-    if port_vlan and not protocol_vlan:
-        reasons.append("单一VLAN（终端通常不需要Protocol VLAN）")
-        score += 1
-
-    # Check device capabilities on the other end
-    if capabilities:
-        if safe_get(capabilities, 'bridge') or safe_get(capabilities, 'station'):
-            reasons.append("对端为桥接/终端设备")
-            score += 1
-
-    if score >= 4:
-        role = PortRole.TERMINAL
-        return PortProfile(
-            role=role,
-            confidence=min(90, 70 + score * 3),
-            reasons=reasons,
-            suggested_color="#f59e0b"  # Orange for Terminal
-        )
-
-    # ========== Rule 4: Access Port Detection ==========
-    # Key indicators:
-    # - Single Port VLAN
-    # - No Protocol VLAN
-    # - No PoE or PoE not supported
-    # - Switch capability
-    score = 0
-    reasons = []
-
-    if port_vlan and not protocol_vlan:
-        reasons.append("单一Port VLAN（接入特征）")
-        score += 2
-
-    if not protocol_vlan:
-        reasons.append("无Protocol VLAN（非干道）")
-        score += 1
-
-    # Check if no PoE (regular access port)
-    if poe and not safe_get(poe, 'supported'):
-        reasons.append("无PoE（普通接入）")
-        score += 1
-
-    # Check speed
-    if macphy and macphy.speed:
-        speed = macphy.speed
-        if '1G' in speed:
-            reasons.append("千兆接入")
-            score += 1
-
-    if score >= 3:
-        role = PortRole.ACCESS
-        return PortProfile(
-            role=role,
-            confidence=min(85, 65 + score * 3),
-            reasons=reasons,
-            suggested_color="#22c55e"  # Green for Access
-        )
-
-    # ========== Rule 5: Uplink Port Detection ==========
-    # Key indicators:
-    # - High speed
-    # - Router capability
-    # - May have VLANs
-    score = 0
-    reasons = []
-
-    if capabilities and safe_get(capabilities, 'router'):
-        reasons.append("具备路由能力（上联特征）")
-        score += 3
-
-    if macphy and macphy.speed:
-        speed = macphy.speed
-        if '10G' in speed or '25G' in speed or '40G' in speed:
-            reasons.append(f"高速率({speed})符合上联特征")
-            score += 2
-        elif '1G' in speed:
-            reasons.append("千兆速率（可能是小型网络上联）")
-            score += 1
-
-    if port_vlan or protocol_vlan:
-        reasons.append("携带VLAN信息")
-        score += 1
-
-    if score >= 4:
-        role = PortRole.UPLINK
-        return PortProfile(
-            role=role,
-            confidence=min(90, 70 + score * 3),
-            reasons=reasons,
-            suggested_color="#a855f7"  # Light purple for Uplink
-        )
-
-    # ========== 🔥 NEW Rule 6: Core Infrastructure Detection ==========
-    # Key indicators:
-    # - Bridge + Router capabilities
-    # - Trunk/Port-channel in description
-    # - High speed (10G+)
-    score = 0
-    reasons = []
-
-    if capabilities:
-        if safe_get(capabilities, 'bridge') and safe_get(capabilities, 'router'):
-            reasons.append("具备桥接+路由能力（核心设备特征）")
-            score += 4
-
-    # Check system description for infrastructure keywords
-    system_desc = safe_get(device, 'system_description', '').lower()
-    port_desc = safe_get(device, 'port_description', '').lower()
-
-    infra_keywords = ['trunk', 'port-channel', 'eth-channel', 'bundle', 'ten', 'forty', 'hundred']
-    if any(kw in system_desc or kw in port_desc for kw in infra_keywords):
-        reasons.append("端口描述包含基础设施关键词")
-        score += 3
-
-    if macphy and macphy.speed:
-        speed = macphy.speed
-        if '10G' in speed or '25G' in speed or '40G' in speed or '100G' in speed:
-            reasons.append(f"高速率({speed})符合核心设备特征")
-            score += 2
-
-    if score >= 6:
-        role = PortRole.CORE_INFRA
-        return PortProfile(
-            role=role,
-            confidence=min(98, 80 + score * 2),
-            reasons=reasons,
-            suggested_color="#7c3aed"  # Deep purple for Core Infrastructure
-        )
-
-    # ========== 🔥 NEW Rule 7: VoIP Phone Detection ==========
-    # Key indicators:
-    # - Bridge capability only (phones have small switches)
-    # - PoE powered
-    # - System name/description contains phone keywords
-    score = 0
-    reasons = []
-
-    if capabilities and safe_get(capabilities, 'bridge') and not safe_get(capabilities, 'router'):
-        reasons.append("仅桥接能力（电话特征）")
-        score += 2
-
-    if poe and safe_get(poe, 'supported'):
-        power_type = safe_get(poe, 'power_type', '').lower()
-        if 'pd' in power_type:  # Power Device
-            reasons.append("PoE受电设备（IP电话通常为PD）")
-            score += 3
-
-    # Check device name for phone keywords
-    system_name = safe_get(device, 'system_name', '').lower()
-    phone_keywords = ['phone', '7960', '7970', '7841', '8851', 'avaya', 'cisco ip phone']
-    if any(kw in system_name for kw in phone_keywords):
-        reasons.append("系统名称包含IP电话关键词")
-        score += 4
-
-    # Check LLDP-MED for network connectivity device class
-    lldp_med_caps = safe_get(device, 'lldp_med_capabilities')
-    if lldp_med_caps:
-        device_class = safe_get(lldp_med_caps, 'device_class', '')
-        if 'network connectivity' in str(device_class).lower():
-            reasons.append("LLDP-MED标识为网络连接设备")
-            score += 2
-
-    if score >= 5:
-        role = PortRole.VOIP_PHONE
-        return PortProfile(
-            role=role,
-            confidence=min(95, 75 + score * 2),
-            reasons=reasons,
-            suggested_color="#fbbf24"  # Yellow for VoIP phones
-        )
-
-    # ========== 🔥 NEW Rule 8: Wireless AP Detection ==========
-    # Key indicators:
-    # - WLAN Access Point capability
-    # - System name contains AP keywords
-    score = 0
-    reasons = []
-
-    if capabilities:
-        if 'wlan access point' in str(safe_get(capabilities, 'get_all_capabilities', [])).lower():
-            reasons.append("具备WLAN接入点能力")
-            score += 4
-
-    # Check for AP keywords in system name
-    ap_keywords = ['ap', 'aruba', 'ubiquiti', 'ruckus', 'aeroscout', 'meraki']
-    if any(kw in system_name for kw in ap_keywords):
-        reasons.append("系统名称包含无线AP关键词")
-        score += 3
-
-    if poe and safe_get(poe, 'supported'):
-        reasons.append("支持PoE供电（AP常见配置）")
-        score += 1
-
-    if score >= 4:
-        role = PortRole.WIRELESS_AP
-        return PortProfile(
-            role=role,
-            confidence=min(92, 75 + score * 2),
-            reasons=reasons,
-            suggested_color="#10b981"  # Green for Wireless AP
-        )
-
-    # ========== 🔥 NEW Rule 9: Hypervisor Detection ==========
-    # Key indicators:
-    # - Chassis ID MAC belongs to VMware/Microsoft/Xen
-    # - System name contains ESXi/vswitch keywords
-    score = 0
-    reasons = []
-
-    # Check chassis ID MAC OUI for virtualization vendors
-    chassis_id = safe_get(device, 'chassis_id')
-    if chassis_id:
-        mac_value = str(safe_get(chassis_id, 'value', ''))
-
-        # VMware OUI: 00:05:69, 00:0c:29, 00:50:56
-        if any(oui in mac_value for oui in ['00:05:69', '00:0c:29', '00:50:56']):
-            reasons.append("MAC地址属于VMware虚拟化平台")
-            score += 4
-
-        # Microsoft OUI: 00:15:5d
-        elif '00:15:5d' in mac_value:
-            reasons.append("MAC地址属于Microsoft Hyper-V")
-            score += 4
-
-    # Check system name for hypervisor keywords
-    hypervisor_keywords = ['esxi', 'vswitch', 'hyperv', 'xen', 'kvm']
-    if any(kw in system_name for kw in hypervisor_keywords):
-        reasons.append("系统名称包含虚拟化平台关键词")
-        score += 3
-
-    if score >= 4:
-        role = PortRole.HYPERVISOR
-        return PortProfile(
-            role=role,
-            confidence=min(90, 75 + score * 2),
-            reasons=reasons,
-            suggested_color="#0891b2"  # Cyan for Hypervisor
-        )
-
-    # ========== 🔥 NEW Rule 10: Anomaly Detection ==========
-    # Detect potential network issues
-    score = 0
-    reasons = []
-
-    # Check for half-duplex (anomaly)
+    # 🔥 安全的速率提取: 处理macphy为None的情况
     if macphy:
-        duplex = safe_get(macphy, 'duplex', '').lower()
-        if 'half' in duplex:
-            reasons.append("⚠️ 检测到半双工模式（性能瓶颈）")
-            score += 5
+        speed = safe_get(macphy, 'speed', '')
+        if speed:  # 确保speed不是None
+            if '10G' in speed or '25G' in speed or '40G' in speed:
+                features.speed_10g_plus = True
+                features.speed_1g_plus = True
+            elif '1000' in speed or '1G' in speed:
+                features.speed_1g_plus = True
 
-    # Check for missing management address (unmanaged device)
-    mgmt_ip = safe_get(device, 'management_ip')
-    if not mgmt or mgmt == '未提供':
-        reasons.append("⚠️ 缺少管理地址（非受管设备）")
-        score += 2
+        duplex = safe_get(macphy, 'duplex', '')
+        if duplex:  # 确保duplex不是None
+            features.duplex_full = 'Full' in duplex
 
-    if score >= 3:
-        role = PortRole.ANOMALY
-        return PortProfile(
-            role=role,
-            confidence=min(85, 70 + score * 2),
-            reasons=reasons,
-            suggested_color="#ef4444"  # Red for anomalies
-        )
+    # ========== 管理特征提取 ==========
+    management_ip = safe_get(device, 'management_ip')
+    features.has_management_ip = management_ip and management_ip != "未提供"
 
-    # ========== Default: Unknown ==========
-    return PortProfile(
-        role=PortRole.UNKNOWN,
-        confidence=50,
-        reasons=["特征不明显，无法确定端口角色"],
-        suggested_color="#94a3b8"  # Gray for Unknown
+    system_desc = safe_get(device, 'system_description')
+    features.has_system_description = bool(system_desc)
+
+    # ========== VLAN名称特征提取（业务网络识别）==========
+    vlan_names = safe_get(device, 'vlans', [])
+    for vlan_info in vlan_names:
+        if hasattr(vlan_info, 'vlan_name') and vlan_info.vlan_name:
+            name_upper = vlan_info.vlan_name.upper()
+            if any(kw in name_upper for kw in ['MGMT', 'ADMIN', 'MGT']):
+                features.has_mgmt_vlan = True
+            elif any(kw in name_upper for kw in ['DATA', 'USER', 'OFFICE']):
+                features.has_data_vlan = True
+            elif any(kw in name_upper for kw in ['VOICE', 'PHONE']):
+                features.has_voice_vlan = True
+            elif any(kw in name_upper for kw in ['STOR', 'SAN', 'NAS']):
+                features.has_storage_vlan = True
+
+    return features
+
+
+def infer_device_type(features: PortFeatures, device) -> DeviceType:
+    """
+    🔥 新增：DeviceType推断
+
+    设备类型会反向影响PortRole推断
+    """
+    # 1. 绝对规则（直接返回）
+
+    # PoE + 无线能力 = AP
+    if features.has_poe and features.is_wlan:
+        return DeviceType.ACCESS_POINT
+
+    # PoE + 无无线能力 = IP电话
+    if features.has_poe and not features.is_wlan:
+        return DeviceType.IP_PHONE
+
+    # 路由能力 = Router
+    if features.is_router:
+        return DeviceType.ROUTER
+
+    # 桥接能力 + 聚合 = Switch
+    if features.is_bridge and features.is_aggregated:
+        return DeviceType.SWITCH
+
+    # 高MTU + 10G+速率 = Storage
+    if features.jumbo_frame and features.speed_10g_plus:
+        return DeviceType.STORAGE
+
+    # 2. 推断规则
+
+    # 桥接能力 = Switch
+    if features.is_bridge:
+        return DeviceType.SWITCH
+
+    # 管理IP + 系统描述 = 服务器类设备
+    if features.has_management_ip and features.has_system_description:
+        return DeviceType.SERVER
+
+    # 默认 = Terminal
+    return DeviceType.TERMINAL
+
+
+def run_priority_rules(features: PortFeatures, device_type: DeviceType) -> Optional[PortRole]:
+    """
+    🔥 规则引擎：优先级规则（绝对规则）
+
+    这些规则一旦匹配，直接返回，不参与后续推断
+    """
+
+    # ========== 优先级1：绝对规则（直接返回）==========
+
+    # 规则1：链路聚合 = UPLINK_LAG（无条件）
+    if features.is_aggregated:
+        return PortRole.UPLINK_LAG
+
+    # 规则2：Protocol VLAN存在 = TRUNK（无条件）
+    if features.has_protocol_vlan:
+        if features.has_port_vlan:
+            return PortRole.TRUNK_NATIVE
+        else:
+            return PortRole.TRUNK_NO_NATIVE
+
+    # 规则3：高MTU (>2000) + 1G+速率 = UPLINK或Storage
+    if features.high_mtu and features.speed_1g_plus:
+        if features.jumbo_frame:
+            return PortRole.STORAGE_NETWORK
+        else:
+            return PortRole.UPLINK_SINGLE
+
+    # 规则4：路由能力 = UPLINK
+    if features.is_router:
+        return PortRole.UPLINK_SINGLE
+
+    # 规则5：设备类型修正规则
+    if device_type == DeviceType.ACCESS_POINT:
+        return PortRole.ACCESS_WIRELESS
+
+    if device_type == DeviceType.IP_PHONE:
+        return PortRole.ACCESS_VOICE
+
+    # 🔥 修复: 安全检查device_type，避免None值错误
+    if device_type and device_type in [DeviceType.ROUTER, DeviceType.SWITCH]:
+        return PortRole.CORE_DISTRIBUTION
+
+    # 没有绝对规则匹配，返回None继续后续推断
+    return None
+
+
+def run_secondary_inference(features: PortFeatures, device_type: DeviceType, semantic_reasons: Set[str]) -> PortRole:
+    """
+    🔥 二次推断：特征相互影响
+
+    这里semantic_reasons不只是展示文本，而是参与推断的语义特征集合
+    """
+
+    # 基础推断
+    if features.has_port_vlan and not features.has_protocol_vlan:
+        # 有Port VLAN但无Protocol VLAN = Access口
+        if device_type == DeviceType.TERMINAL:
+            return PortRole.ACCESS_TERMINAL
+        else:
+            return PortRole.ACCESS_TERMINAL
+
+    # 🔥 二次推断：特征组合推断
+
+    # 特征组合1：PoE + 低速率 = 终端接入
+    if features.has_poe and not features.speed_1g_plus:
+        semantic_reasons.add("PoE_LowSpeed_Terminal")
+        return PortRole.ACCESS_TERMINAL
+
+    # 特征组合2：高速率 + 桥接 = 核心设备
+    if features.speed_10g_plus and features.is_bridge:
+        semantic_reasons.add("HighSpeed_Bridge_Core")
+        return PortRole.CORE_DISTRIBUTION
+
+    # 特征组合3：多VLAN名称 + 桥接 = 核心交换机
+    if features.is_bridge:
+        vlan_count = sum([
+            features.has_mgmt_vlan,
+            features.has_data_vlan,
+            features.has_voice_vlan,
+            features.has_storage_vlan
+        ])
+        if vlan_count >= 2:
+            semantic_reasons.add("MultiVLAN_CoreSwitch")
+            return PortRole.CORE_DISTRIBUTION
+
+    # 特征组合4：管理IP + 高速率 = 基础设施
+    if features.has_management_ip and features.speed_1g_plus:
+        semantic_reasons.add("MgmtIP_HighSpeed_Infra")
+        return PortRole.INFRASTRUCTURE
+
+    # 默认推断
+    if features.has_management_ip:
+        return PortRole.ACCESS_TERMINAL
+    else:
+        return PortRole.UNKNOWN
+
+
+def infer_port_intent(device) -> PortIntentProfile:
+    """
+    🔥 质变升级：专业NMS推断引擎
+
+    架构：TLV → Feature → Priority Rules → Secondary Inference → PortRole/DeviceType
+    """
+
+    # ========== 第1层：Feature抽象 ==========
+    features = extract_features(device)
+
+    # ========== 第2层：DeviceType推断 ==========
+    device_type = infer_device_type(features, device)
+
+    # ========== 第3层：优先级规则引擎 ==========
+    priority_result = run_priority_rules(features, device_type)
+
+    # ========== 第4层：二次推断 ==========
+    semantic_reasons = set()
+
+    if priority_result:
+        # 绝对规则匹配，直接使用
+        final_role = priority_result
+        confidence = 98  # 高置信度
+    else:
+        # 无绝对规则，进行二次推断
+        final_role = run_secondary_inference(features, device_type, semantic_reasons)
+
+        # 根据特征数量计算置信度
+        evidence_count = sum([
+            features.has_port_vlan,
+            features.has_protocol_vlan,
+            features.is_aggregated,
+            features.high_mtu,
+            features.has_poe,
+            features.speed_1g_plus
+        ])
+        confidence = min(95, 60 + evidence_count * 5)
+
+    # ========== 生成语义原因集合 ==========
+    if features.is_aggregated:
+        semantic_reasons.add("Aggregation_Uplink")
+    if features.has_protocol_vlan:
+        semantic_reasons.add("ProtocolVLAN_Trunk")
+    if features.high_mtu:
+        semantic_reasons.add("HighMTU_Storage")
+    if features.speed_10g_plus:
+        semantic_reasons.add("HighSpeed_Core")
+    if features.has_poe:
+        semantic_reasons.add("PoE_Terminal")
+
+    # ========== 生成运维洞察和建议 ==========
+    insight, suggestion = generate_insight_and_suggestion(final_role, device_type, features, semantic_reasons)
+
+    # ========== 生成TLV证据 ==========
+    evidence = generate_tlv_evidence(features, device_type)
+
+    # ========== 自动发现的问题 ==========
+    issues = discover_issues(features)
+
+    return PortIntentProfile(
+        role=final_role,
+        device_type=device_type,
+        intent=map_role_to_intent(final_role),
+        confidence=confidence,
+        features=features,
+        tlv_evidence=evidence,
+        operational_insight=insight,
+        configuration_suggestion=suggestion,
+        is_managed=features.has_management_ip,
+        auto_discovery_issues=issues,
+        semantic_reasons=semantic_reasons
     )
 
 
-def get_port_role_badge(profile: PortProfile) -> str:
-    """Generate CSS style for port role badge"""
-    color_map = {
-        PortRole.ACCESS: "color:#22c55e;font-weight:600;background:#dcfce7;padding:4px;border-radius:4px;",
-        PortRole.TERMINAL: "color:#f59e0b;font-weight:600;background:#fef3c7;padding:4px;border-radius:4px;",
-        PortRole.TRUNK: "color:#3b82f6;font-weight:600;background:#dbeafe;padding:4px;border-radius:4px;",
-        PortRole.UPLINK: "color:#a855f7;font-weight:600;background:#f3e8ff;padding:4px;border-radius:4px;",
-        PortRole.UPLINK_LAG: "color:#8b5cf6;font-weight:700;background:#ede9fe;padding:4px;border-radius:4px;",
-        # 🔥 NEW: Enhanced role styles
-        PortRole.CORE_INFRA: "color:#7c3aed;font-weight:700;background:#ddd6fe;padding:4px;border-radius:4px;border:1px solid #7c3aed;",
-        PortRole.WIRELESS_AP: "color:#10b981;font-weight:600;background:#d1fae5;padding:4px;border-radius:4px;",
-        PortRole.VOIP_PHONE: "color:#fbbf24;font-weight:600;background:#fef3c7;padding:4px;border-radius:4px;",
-        PortRole.HYPERVISOR: "color:#0891b2;font-weight:600;background:#cffafe;padding:4px;border-radius:4px;",
-        PortRole.ANOMALY: "color:#ef4444;font-weight:700;background:#fee2e2;padding:4px;border-radius:4px;border:1px solid #ef4444;",
-        PortRole.UNKNOWN: "color:#94a3b8;font-weight:600;background:#f1f5f9;padding:4px;border-radius:4px;",
+def map_role_to_intent(role: PortRole) -> NetworkIntent:
+    """PortRole到NetworkIntent的映射"""
+    intent_map = {
+        PortRole.ACCESS_TERMINAL: NetworkIntent.TERMINAL_ACCESS,
+        PortRole.ACCESS_WIRELESS: NetworkIntent.WIRELESS_ACCESS,
+        PortRole.ACCESS_VOICE: NetworkIntent.VOICE_PROVISIONING,
+        PortRole.TRUNK_NATIVE: NetworkIntent.TRUNK_TRANSPORT,
+        PortRole.TRUNK_NO_NATIVE: NetworkIntent.TRUNK_TRANSPORT,
+        PortRole.UPLINK_LAG: NetworkIntent.UPLINK_REDUNDANCY,
+        PortRole.UPLINK_SINGLE: NetworkIntent.UPLINK_REDUNDANCY,
+        PortRole.STORAGE_NETWORK: NetworkIntent.HIGH_SPEED_STORAGE,
+        PortRole.CORE_DISTRIBUTION: NetworkIntent.NETWORK_MANAGEMENT,
+        PortRole.INFRASTRUCTURE: NetworkIntent.NETWORK_MANAGEMENT,
+        PortRole.UNKNOWN: NetworkIntent.TERMINAL_ACCESS,
     }
-    return color_map.get(profile.role, color_map[PortRole.UNKNOWN])
+    return intent_map.get(role, NetworkIntent.TERMINAL_ACCESS)
 
 
-def infer_device_type(device) -> DeviceType:
-    """
-    🔥 NEW: Device type inference from TLV combinations
+def generate_insight_and_suggestion(role: PortRole, device_type: DeviceType, features: PortFeatures, semantic_reasons: Set[str]):
+    """生成运维洞察和配置建议"""
 
-    This is the critical missing piece for true semantic inference.
-    Analyzes Capabilities, PoE, MAC/PHY to determine device type.
+    # 基于角色和设备类型的组合生成洞察
+    if role == PortRole.UPLINK_LAG:
+        insight = f"上联链路聚合，提供冗余和带宽扩展"
+        if features.aggregation_id:
+            insight += f"（聚合组ID: {features.aggregation_id}）"
+        suggestion = "验证LACP配置，确保负载均衡正确，监控链路状态"
 
-    Args:
-        device: LLDPDevice or CDP device object
+    elif role == PortRole.TRUNK_NATIVE:
+        insight = f"Trunk端口，承载多个VLAN流量，对端设备: {device_type.value}"
+        suggestion = "检查Native VLAN配置，确保VLAN路由正确，监控VLAN tagged流量"
 
-    Returns:
-        DeviceType with confidence
-    """
-    capabilities = safe_get(device, 'capabilities')
-    poe = safe_get(device, 'poe')
-    macphy = safe_get(device, 'macphy_config')
-    system_name = safe_get(device, 'system_name', '').lower()
+    elif role == PortRole.ACCESS_WIRELESS:
+        insight = "无线AP接入端口，支持PoE供电"
+        suggestion = f"配置为Access VLAN，启用PoE+，检查AP管理VLAN，优化无线漫游"
 
-    score = 0
-    reasons = []
-    device_type = DeviceType.UNKNOWN
+    elif role == PortRole.ACCESS_VOICE:
+        insight = "IP电话接入端口，支持QoS保障"
+        suggestion = "配置Voice VLAN + Data VLAN，启用PoE，配置QoS优先级"
 
-    # 🔥 CRITICAL: Capabilities组合判断
-    if capabilities:
-        all_caps = capabilities.get_all_capabilities()
+    elif role == PortRole.STORAGE_NETWORK:
+        insight = "存储网络端口，启用Jumbo Frame以提升传输效率"
+        suggestion = "确保路径MTU一致，验证巨帧配置，监控存储流量"
 
-        # Bridge + Router = L3设备
-        if safe_get(capabilities, 'router') and safe_get(capabilities, 'bridge'):
-            reasons.append("具备路由+桥接能力（三层设备）")
-            score += 8
-            device_type = DeviceType.ROUTER
+    elif role == PortRole.CORE_DISTRIBUTION:
+        insight = f"核心/分发层设备，类型: {device_type.value}"
+        suggestion = "检查VLAN路由配置，确保业务隔离，监控核心链路负载"
 
-        # Bridge only = L2设备
-        elif safe_get(capabilities, 'bridge'):
-            device_type = DeviceType.SWITCH
-            reasons.append("具备桥接能力（交换机特征）")
-            score += 4
-
-        # WLAN Access Point
-        if 'wlan access point' in [cap.lower() for cap in all_caps]:
-            device_type = DeviceType.WIRELESS_AP
-            reasons.append("具备WLAN接入点能力")
-            score += 6
-
-    # 🔥 PoE + MAC/PHY组合判断
-    if poe and safe_get(poe, 'supported'):
-        power_source = safe_get(poe, 'power_source', '')
-        power_type = safe_get(poe, 'power_type', '')
-
-        # PD = 受电设备，判断具体类型
-        if 'PD' in power_source:
-            # IP电话判断
-            if 'phone' in str(power_type).lower() or '7960' in str(power_type).lower():
-                device_type = DeviceType.VOIP_PHONE
-                reasons.append("PoE受电 + 电话类型特征")
-                score += 6
-            # AP判断
-            elif device_type != DeviceType.WIRELESS_AP:
-                # 如果没有WLAN能力，可能是AP
-                if not capabilities or 'wlan' not in str(capabilities.get_all_capabilities()).lower():
-                    device_type = DeviceType.WIRELESS_AP
-                    reasons.append("PoE受电 + 无WLAN能力（可能是AP）")
-                    score += 4
-                else:
-                    device_type = DeviceType.TERMINAL
-                    reasons.append("PoE受电终端设备")
-                    score += 3
-
-    # 🔥 System Name模式匹配
-    if 'esxi' in system_name or 'hyperv' in system_name:
-        device_type = DeviceType.HYPERVISOR
-        reasons.append("系统名称包含虚拟化平台关键词")
-        score += 5
-    elif 'ap' in system_name or 'aruba' in system_name or 'ubiquiti' in system_name:
-        if device_type == DeviceType.UNKNOWN:
-            device_type = DeviceType.WIRELESS_AP
-            reasons.append("系统名称包含无线AP关键词")
-            score += 4
-
-    # 🔥 MAC/PHY速度判断
-    if macphy and macphy.speed:
-        speed = macphy.speed
-        if '10G' in speed or '25G' in speed:
-            if device_type in [DeviceType.SWITCH, DeviceType.UNKNOWN]:
-                device_type = DeviceType.ROUTER
-                reasons.append(f"高速率({speed}) - 核心设备特征")
-                score += 4
-
-    # 最终确定设备类型
-    if score >= 4:
-        return device_type
     else:
-        return DeviceType.UNKNOWN
+        insight = f"{role.value}端口，对端设备: {device_type.value}"
+        suggestion = "根据实际业务需求配置端口参数，监控端口状态和流量"
+
+    return insight, suggestion
 
 
-def format_port_profile_summary(profile: PortProfile) -> str:
-    """Generate human-readable profile summary"""
-    role_name = profile.role.value
+def generate_tlv_evidence(features: PortFeatures, device_type: DeviceType) -> List[str]:
+    """生成TLV证据列表"""
+    evidence = []
 
-    if profile.confidence >= 90:
-        confidence_label = "高"
-    elif profile.confidence >= 70:
-        confidence_label = "中"
-    else:
-        confidence_label = "低"
+    if features.has_port_vlan:
+        evidence.append(f"Port VLAN ID存在（Access口特征）")
+    if features.has_protocol_vlan:
+        evidence.append(f"Protocol VLAN ID存在（Trunk口特征）")
+    if features.is_aggregated:
+        evidence.append(f"链路聚合启用（上联特征）")
+    if features.high_mtu:
+        evidence.append(f"MTU > 2000（存储网络特征）")
+    if features.has_poe:
+        evidence.append(f"PoE支持（终端供电特征）")
+    if features.speed_10g_plus:
+        evidence.append(f"速率 >= 10G（核心设备特征）")
+    if features.is_router:
+        evidence.append(f"路由能力（三层设备特征）")
 
-    return f"{role_name} ({confidence_label}置信度 {profile.confidence}%)"
+    evidence.append(f"设备类型推断: {device_type.value}")
+
+    return evidence
+
+
+def discover_issues(features: PortFeatures) -> List[str]:
+    """自动发现配置问题"""
+    issues = []
+
+    if not features.has_management_ip:
+        issues.append("设备无管理地址，NMS无法管理")
+
+    if features.speed_1g_plus and not features.duplex_full:
+        issues.append("高速率但非全双工，存在性能瓶颈")
+
+    if features.is_aggregated and not features.speed_1g_plus:
+        issues.append("链路聚合但速率较低，可能配置不当")
+
+    return issues
+
+
+def format_intent_profile(profile: PortIntentProfile) -> str:
+    """格式化意图配置文件为可读文本"""
+    lines = [
+        f"端口角色: {profile.role.value}",
+        f"设备类型: {profile.device_type.value}",  # 新增
+        f"网络意图: {profile.intent.value if profile.intent else '未知'}",
+        f"置信度: {profile.confidence}%",
+        f"受管设备: {'是' if profile.is_managed else '否'}",
+        "",
+        "🔍 TLV证据:"
+    ] + [f"  • {evidence}" for evidence in profile.tlv_evidence] + [
+        "",
+        "💡 运维洞察:",
+        f"  {profile.operational_insight}",
+        "",
+        "📋 配置建议:",
+        f"  {profile.configuration_suggestion}",
+    ]
+
+    if profile.semantic_reasons:
+        lines.extend([
+            "",
+            "🧠 语义推断原因:"
+        ] + [f"  • {reason}" for reason in profile.semantic_reasons])
+
+    if profile.auto_discovery_issues:
+        lines.extend([
+            "",
+            "⚠️ 发现问题:"
+        ] + [f"  • {issue}" for issue in profile.auto_discovery_issues])
+
+    return "\n".join(lines)

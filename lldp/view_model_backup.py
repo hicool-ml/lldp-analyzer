@@ -13,8 +13,7 @@ from .port_profile import (
     infer_port_intent,
     format_intent_profile,
     PortRole,
-    NetworkIntent,
-    DeviceType  # 新增导入
+    NetworkIntent
 )
 
 
@@ -69,13 +68,9 @@ EMERALD_BADGE = "color:#10b981; font-weight:700; background:#d1fae5; padding:4px
 
 
 def format_vlan(device, intent_profile=None) -> str:
-    """
-    🔥 ENHANCED: Format VLAN information with network intent awareness
-
-    修复: 安全处理intent_profile，避免向后兼容问题
-    """
+    """🔥 ENHANCED: Format VLAN information with network intent awareness"""
     # 🔥 NEW: 如果有intent_profile，使用网络意图推断结果
-    if intent_profile and hasattr(intent_profile, 'role') and intent_profile.role:
+    if intent_profile:
         port_vlan = safe_get(device, 'port_vlan')
         protocol_vlan = safe_get(device, 'protocol_vlan_id')
 
@@ -162,18 +157,13 @@ def get_vlan_style(device) -> str:
 
 
 def format_macphy(device) -> str:
-    """
-    Format MAC/PHY configuration
-
-    修复: 安全处理Ruijie等厂商缺失macphy_config的情况
-    """
+    """Format MAC/PHY configuration"""
     macphy = safe_get(device, 'macphy_config')
     if not macphy:
         return "未提供"
 
     # All supported speeds
-    # 🔥 安全检查: supported_speeds可能是None或不存在
-    if hasattr(macphy, 'supported_speeds') and macphy.supported_speeds:
+    if macphy.supported_speeds:
         return " / ".join(macphy.supported_speeds)
 
     # Current speed + duplex
@@ -255,24 +245,13 @@ def format_poe(device) -> str:
 
 
 def format_capabilities(device) -> str:
-    """
-    Format device capabilities
-
-    修复: 安全处理Ruijie等厂商缺失Capabilities TLV的情况
-    """
+    """Format device capabilities"""
     caps = safe_get(device, 'capabilities')
     if not caps:
         return "未知"
 
-    # 🔥 安全检查: get_all_capabilities可能返回None或抛出异常
-    try:
-        all_caps = caps.get_all_capabilities()
-        if all_caps and isinstance(all_caps, list):
-            return " / ".join(all_caps)
-        else:
-            return "未知"
-    except (AttributeError, TypeError):
-        return "未知"
+    all_caps = caps.get_all_capabilities()
+    return " / ".join(all_caps) if all_caps else "未知"
 
 
 def to_view(device) -> DeviceView:
@@ -488,11 +467,7 @@ def _get_port_role_badge(port_intent: PortIntentProfile) -> str:
 
 
 def _format_intent_summary(port_intent: PortIntentProfile) -> str:
-    """
-    Generate human-readable intent summary
-
-    🔥 修复: 安全处理新增的device_type字段，避免None错误
-    """
+    """Generate human-readable intent summary"""
     if port_intent.confidence >= 90:
         confidence_label = "高"
     elif port_intent.confidence >= 70:
@@ -500,9 +475,4 @@ def _format_intent_summary(port_intent: PortIntentProfile) -> str:
     else:
         confidence_label = "低"
 
-    # 安全获取device_type，避免None错误
-    device_type_text = ""
-    if hasattr(port_intent, 'device_type') and port_intent.device_type:
-        device_type_text = f" | {port_intent.device_type.value}"
-
-    return f"{port_intent.role.value}{device_type_text} ({confidence_label}置信度 {port_intent.confidence}%)"
+    return f"{port_intent.role.value} ({confidence_label}置信度 {port_intent.confidence}%)"

@@ -2,7 +2,7 @@
 LLDP Network Analyzer - Industrial Grade Architecture
 """
 
-__version__ = "1.0.0"
+__version__ = "3.0.0"
 __author__ = "LLDP Network Team"
 
 from .model import LLDPDevice, LLDPChassisID, LLDPPortID
