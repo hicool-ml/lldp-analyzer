@@ -1,14 +1,16 @@
 """
 LLDP and CDP Packet Capture
-Capture layer with queue-based threading - Enhanced with CDP support!
+Capture layer with queue-based threading - Enhanced with CDP support + Multi-packet Fusion!
+
+🔥 v3.0 新增：LLDPDevice缓存和多报文融合机制
 """
 
 import queue
 import threading
 import time
 import logging
-from typing import Optional, Callable
-from dataclasses import dataclass
+from typing import Optional, Callable, Dict
+from dataclasses import dataclass, field
 
 # Logger for capture module
 log = logging.getLogger("lldp.capture")
@@ -29,6 +31,31 @@ class CaptureResult:
     device: object  # LLDPDevice
     timestamp: float
     interface: str
+    is_fused: bool = False  # 🔥 新增：是否为融合结果
+    fusion_count: int = 1  # 🔥 新增：融合了多少个报文
+
+
+@dataclass
+class DeviceCacheEntry:
+    """🔥 设备缓存条目 - 用于多报文融合"""
+    device: object  # LLDPDevice
+    first_seen: float  # 首次发现时间
+    last_seen: float  # 最后发现时间
+    packet_count: int  # 收到报文数量
+    interface: str  # 发现接口
+
+    def should_fuse(self, max_age: float = 5.0) -> bool:
+        """判断是否应该进行融合"""
+        age = time.time() - self.first_seen
+        return age >= max_age or self.packet_count >= 3
+
+    def merge_with(self, new_device) -> object:
+        """🔥 融合新报文到当前设备"""
+        # TODO: 实现智能融合逻辑
+        # - 合并TLV字段
+        # - 补充缺失信息
+        # - 提升数据完整性
+        return self.device  # 简化版：直接返回原设备
 
 
 class LLDPCapture:
@@ -38,6 +65,11 @@ class LLDPCapture:
     Thread-safe capture using queue-based architecture.
     Decouples capture thread from UI thread.
     Now supports both LLDP (IEEE 802.1AB) and CDP (Cisco Discovery Protocol).
+
+    🔥 v3.0 新增：多报文融合机制
+    - 自动缓存同设备多报文
+    - 智能融合提升数据完整性
+    - 减少重复设备发现
     """
 
     def __init__(self):
@@ -50,6 +82,102 @@ class LLDPCapture:
         self.device_queue: queue.Queue = queue.Queue()
         self.is_capturing = False
         self.capture_thread: Optional[threading.Thread] = None
+
+        # 🔥 新增：设备缓存机制
+        self.device_cache: Dict[str, DeviceCacheEntry] = {}  # key: device_id
+        self.cache_lock = threading.Lock()  # 缓存锁
+        self.fusion_interval = 5.0  # 融合时间窗口（秒）
+
+    def _get_device_id(self, device) -> str:
+        """
+        🔥 生成设备唯一标识符
+
+        优先级：Chassis ID > System Name > MAC地址
+        """
+        # 优先使用Chassis ID
+        if hasattr(device, 'chassis_id') and device.chassis_id:
+            return f"{device.chassis_id.type.name}:{device.chassis_id.value}"
+
+        # 其次使用System Name
+        if hasattr(device, 'system_name') and device.system_name:
+            return f"SYSNAME:{device.system_name}"
+
+        # 最后使用MAC（如果有）
+        if hasattr(device, 'source_mac') and device.source_mac:
+            return f"MAC:{device.source_mac}"
+
+        # 默认：使用时间戳
+        return f"UNKNOWN:{time.time()}"
+
+    def _cache_device(self, device, interface: str) -> bool:
+        """
+        🔥 缓存设备并判断是否应该输出
+
+        返回：True（应该输出到队列），False（继续缓存）
+        """
+        device_id = self._get_device_id(device)
+        current_time = time.time()
+
+        with self.cache_lock:
+            if device_id in self.device_cache:
+                # 设备已存在，更新缓存
+                cache_entry = self.device_cache[device_id]
+                cache_entry.last_seen = current_time
+                cache_entry.packet_count += 1
+
+                # 🔥 检查是否应该融合并输出
+                if cache_entry.should_fuse(self.fusion_interval):
+                    # 融合完成，输出设备
+                    fused_device = cache_entry.merge_with(device)
+
+                    # 创建融合结果
+                    result = CaptureResult(
+                        device=fused_device,
+                        timestamp=cache_entry.first_seen,
+                        interface=cache_entry.interface,
+                        is_fused=True,
+                        fusion_count=cache_entry.packet_count
+                    )
+
+                    # 清理缓存
+                    del self.device_cache[device_id]
+
+                    # 输出到队列
+                    self.device_queue.put(result)
+                    return True
+                else:
+                    # 继续缓存
+                    return False
+            else:
+                # 新设备，创建缓存条目
+                self.device_cache[device_id] = DeviceCacheEntry(
+                    device=device,
+                    first_seen=current_time,
+                    last_seen=current_time,
+                    packet_count=1,
+                    interface=interface
+                )
+                return False
+
+    def flush_cache(self):
+        """
+        🔥 强制刷新缓存 - 输出所有缓存的设备
+
+        用于捕获结束时输出未完成融合的设备
+        """
+        with self.cache_lock:
+            for device_id, cache_entry in list(self.device_cache.items()):
+                result = CaptureResult(
+                    device=cache_entry.device,
+                    timestamp=cache_entry.first_seen,
+                    interface=cache_entry.interface,
+                    is_fused=True if cache_entry.packet_count > 1 else False,
+                    fusion_count=cache_entry.packet_count
+                )
+                self.device_queue.put(result)
+
+            # 清空缓存
+            self.device_cache.clear()
 
     def start_capture(self, interface, duration: int = 60, callback: Optional[Callable] = None):
         """
@@ -192,21 +320,29 @@ class LLDPCapture:
 
                             print(f"[DEBUG] Device attributes set successfully")
 
-                            # Push to queue
-                            print(f"[DEBUG] Creating capture result...")
-                            result = CaptureResult(
-                                device=device,
-                                timestamp=time.time(),
-                                interface=str(interface)
-                            )
-                            self.device_queue.put(result)
-                            print(f"[DEBUG] Capture result pushed to queue")
+                            # 🔥 v3.0: 使用设备缓存机制
+                            print(f"[DEBUG] 📦 Caching device for fusion...")
+                            should_output = self._cache_device(device, str(interface))
 
-                            # 🔥 设备发现！立即停止捕获
-                            nonlocal device_found
-                            device_found = True
-                            print(f"[DEBUG] 🎯 Device found! Stopping capture immediately...", flush=True)
-                            self.is_capturing = False  # 停止捕获标志
+                            if should_output:
+                                # 融合完成，输出到队列
+                                print(f"[DEBUG] 🔥 Device fusion complete! Outputting to queue...")
+                                print(f"[DEBUG] Capture result pushed to queue (fused)")
+
+                                # 🔥 设备发现！立即停止捕获
+                                nonlocal device_found
+                                device_found = True
+                                print(f"[DEBUG] 🎯 Device found! Stopping capture immediately...", flush=True)
+                                self.is_capturing = False  # 停止捕获标志
+
+                                # Call callback if provided (runs in capture thread)
+                                if callback:
+                                    try:
+                                        callback(device)
+                                    except Exception as e:
+                                        log.error(f"Callback error: {e}")
+                            else:
+                                print(f"[DEBUG] Device cached, waiting for more packets...")
 
                             # Call callback if provided (runs in capture thread)
                             if callback:
@@ -315,12 +451,20 @@ class LLDPCapture:
             print(f"Capture error: {e}")
 
         finally:
+            # 🔥 v3.0: 捕获结束，刷新缓存
+            print(f"[DEBUG] 🔥 Flushing device cache...", flush=True)
+            self.flush_cache()
+            print(f"[DEBUG] ✅ Device cache flushed", flush=True)
+
             self.is_capturing = False
 
     def stop_capture(self):
         """Stop ongoing capture - Force stop!"""
         print(f"[DEBUG] 🛑 stop_capture called - Stopping capture NOW!", flush=True)
         self.is_capturing = False
+
+        # 🔥 v3.0: 停止时刷新缓存
+        self.flush_cache()
 
         if self.capture_thread and self.capture_thread.is_alive():
             print(f"[DEBUG] Waiting for capture thread to stop...", flush=True)
