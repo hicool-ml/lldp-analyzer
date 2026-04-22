@@ -125,7 +125,7 @@ class PortIntentProfile:
     configuration_suggestion: str       # 配置建议（网络应该怎么配置）
     is_managed: bool                    # 是否受管设备（有Management Address）
     auto_discovery_issues: List[str]    # 自动发现的问题（性能瓶颈、配置错误等）
-    semantic_reasons: Set[RuleID]       # 🔥 v3.0: 规则ID集合，支持统计和二次推断
+    semantic_reasons: Set["RuleID"]       # 🔥 v3.0: 规则ID集合，支持统计和二次推断（前向引用）
 
 
 def extract_features(device) -> PortFeatures:
