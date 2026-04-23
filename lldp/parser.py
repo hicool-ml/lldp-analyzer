@@ -179,7 +179,9 @@ class LLDPParser:
 
             return self.parse_packet(data)
 
-        except Exception:
+        except Exception as e:
+            # 🔥 修复：不再silent，记录错误便于定位scapy问题
+            logger.exception("Scapy packet parsing error: %s", e)
             return None
 
     def _parse_tlv(self, device: LLDPDevice, typ: int, val: bytes):
@@ -346,82 +348,63 @@ class LLDPParser:
 
     def _parse_capabilities(self, val: bytes) -> DeviceCapabilities:
         """
-        🔥 RFC标准修复版：Parse System Capabilities TLV
+        🔥 用户提供的干净实现：Parse System Capabilities TLV (RFC / IEEE 802.1AB)
 
-        按照IEEE 802.1AB标准：
-        - 前2字节 = supported capabilities
-        - 后2字节 = enabled capabilities (如果存在)
-        总共4字节，不是8字节！
+        前2字节 = supported capabilities
+        后2字节 = enabled capabilities
         """
         caps = DeviceCapabilities()
 
-        logger.debug(f"_parse_capabilities called, TLV length: {len(val)}")
-        logger.debug(f"Raw TLV bytes: {val.hex()}")
-        logger.debug(f"Individual bytes: {[f'0x{b:02x}' for b in val[:12]]}")
+        logger.debug("_parse_capabilities called, TLV length: %d", len(val))
+        logger.debug("Raw TLV bytes: %s", val.hex())
 
-        # 🔥 RFC标准修复：至少需要4字节（2字节supported + 2字节enabled）
-        if len(val) >= 4:
-            # 🔥 修复：按照RFC标准，前2字节是supported capabilities
-            supported = int.from_bytes(val[0:2], 'big')
-            logger.debug(f"Supported Capabilities (hex): 0x{supported:04x}")
-            logger.debug(f"Supported Capabilities (bin): {supported:016b}")
+        if len(val) < 4:
+            logger.warning("Capabilities TLV too short: %d bytes (need at least 4)", len(val))
+            return caps
 
-            # IEEE 802.1AB标准能力位定义
-            # Bit 0: Other
-            # Bit 1: Repeater
-            # Bit 2: Bridge/Switch ← 标准的交换机位
-            # Bit 3: WLAN Access Point
-            # Bit 4: Router
-            # Bit 5: Telephone
-            # Bit 6: DOCSIS
-            # Bit 7: Station
-            # Bit 8: Customer VLAN
-            # Bit 9: Customer Bridge
-            # Bit 10: Service VLAN
-            # Bit 11-15: Reserved
+        supported = int.from_bytes(val[0:2], 'big')
+        enabled = int.from_bytes(val[2:4], 'big')
 
-            caps.bridge = bool(supported & (1 << 2))      # Bit 2 = Bridge (交换机)
-            caps.repeater = bool(supported & (1 << 1))
-            caps.wlan = bool(supported & (1 << 3))        # Bit 3 = WLAN
-            caps.router = bool(supported & (1 << 4))      # Bit 4 = Router
-            caps.telephone = bool(supported & (1 << 5))   # Bit 5 = Telephone
-            caps.docsis = bool(supported & (1 << 6))
-            caps.station = bool(supported & (1 << 7))
-            caps.c_vlan = bool(supported & (1 << 8))
-            caps.c_bridge = bool(supported & (1 << 9))
-            caps.s_vlan = bool(supported & (1 << 10))
+        logger.debug("Supported Capabilities (hex): 0x%04x", supported)
+        logger.debug("Enabled Capabilities (hex):  0x%04x", enabled)
 
-            logger.debug(f"Parsed capabilities (per IEEE 802.1AB):")
-            logger.debug(f"  - Other (bit 0): {bool(supported & 1)}")
-            logger.debug(f"  - Repeater (bit 1): {caps.repeater}")
-            logger.debug(f"  - Bridge/Switch (bit 2): {caps.bridge}")
-            logger.debug(f"  - WLAN Access Point (bit 3): {caps.wlan}")
-            logger.debug(f"  - Router (bit 4): {caps.router}")
-            logger.debug(f"  - Telephone (bit 5): {caps.telephone}")
-            logger.debug(f"  - DOCSIS (bit 6): {caps.docsis}")
-            logger.debug(f"  - Station (bit 7): {caps.station}")
-            logger.debug(f"  - Customer VLAN (bit 8): {caps.c_vlan}")
-            logger.debug(f"  - Customer Bridge (bit 9): {caps.c_bridge}")
-            logger.debug(f"  - Service VLAN (bit 10): {caps.s_vlan}")
+        # capability bit constants (for readability)
+        CAP_OTHER    = 1 << 0
+        CAP_REPEATER = 1 << 1
+        CAP_BRIDGE   = 1 << 2
+        CAP_WLAN     = 1 << 3
+        CAP_ROUTER   = 1 << 4
+        CAP_TELEPHONE= 1 << 5
+        CAP_DOCSIS   = 1 << 6
+        CAP_STATION  = 1 << 7
+        CAP_C_VLAN   = 1 << 8
+        CAP_C_BRIDGE = 1 << 9
+        CAP_S_VLAN   = 1 << 10
 
-            # 🔥 RFC标准修复：后2字节是enabled capabilities
-            enabled = int.from_bytes(val[2:4], 'big')
-            logger.debug(f"Enabled Capabilities (hex): 0x{enabled:04x}")
-            logger.debug(f"Enabled Capabilities (bin): {enabled:016b}")
+        caps.repeater = bool(supported & CAP_REPEATER)
+        caps.bridge = bool(supported & CAP_BRIDGE)
+        caps.wlan = bool(supported & CAP_WLAN)
+        caps.router = bool(supported & CAP_ROUTER)
+        caps.telephone = bool(supported & CAP_TELEPHONE)
+        caps.docsis = bool(supported & CAP_DOCSIS)
+        caps.station = bool(supported & CAP_STATION)
+        caps.c_vlan = bool(supported & CAP_C_VLAN)
+        caps.c_bridge = bool(supported & CAP_C_BRIDGE)
+        caps.s_vlan = bool(supported & CAP_S_VLAN)
 
-            caps.bridge_enabled = bool(enabled & (1 << 2))      # Bit 2
-            caps.repeater_enabled = bool(enabled & (1 << 1))
-            caps.wlan_enabled = bool(enabled & (1 << 3))
-            caps.router_enabled = bool(enabled & (1 << 4))
-            caps.telephone_enabled = bool(enabled & (1 << 5))
-            caps.docsis_enabled = bool(enabled & (1 << 6))
-            caps.station_enabled = bool(enabled & (1 << 7))
-            caps.c_vlan_enabled = bool(enabled & (1 << 8))
-            caps.c_bridge_enabled = bool(enabled & (1 << 9))
-            caps.s_vlan_enabled = bool(enabled & (1 << 10))
+        caps.repeater_enabled = bool(enabled & CAP_REPEATER)
+        caps.bridge_enabled = bool(enabled & CAP_BRIDGE)
+        caps.wlan_enabled = bool(enabled & CAP_WLAN)
+        caps.router_enabled = bool(enabled & CAP_ROUTER)
+        caps.telephone_enabled = bool(enabled & CAP_TELEPHONE)
+        caps.docsis_enabled = bool(enabled & CAP_DOCSIS)
+        caps.station_enabled = bool(enabled & CAP_STATION)
+        caps.c_vlan_enabled = bool(enabled & CAP_C_VLAN)
+        caps.c_bridge_enabled = bool(enabled & CAP_C_BRIDGE)
+        caps.s_vlan_enabled = bool(enabled & CAP_S_VLAN)
 
-        else:
-            logger.warning(f"Capabilities TLV too short: {len(val)} bytes (need at least 4)")
+        logger.debug("Parsed capabilities: supported=%s enabled=%s",
+                     caps.get_all_capabilities(), caps.get_enabled_capabilities())
 
         return caps
                 caps.twamp_enabled = caps.twamp
