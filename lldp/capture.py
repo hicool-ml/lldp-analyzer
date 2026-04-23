@@ -44,10 +44,26 @@ class DeviceCacheEntry:
     packet_count: int  # 收到报文数量
     interface: str  # 发现接口
 
-    def should_fuse(self, max_age: float = 5.0) -> bool:
-        """判断是否应该进行融合"""
+    # 🔥 优化D: 消除神奇数字，使用可配置参数
+    max_fusion_age: float = 5.0  # 融合时间窗口（秒）
+    min_packet_count: int = 3   # 最小报文数量
+
+    def should_fuse(self, max_age: float = None, min_packets: int = None) -> bool:
+        """
+        判断是否应该进行融合
+
+        🔥 优化D: 参数可配置，适配不同工业交换机
+
+        Args:
+            max_age: 最大融合时间窗口（秒），None则使用实例默认值
+            min_packets: 最小报文数量，None则使用实例默认值
+        """
+        # 使用传入参数或实例默认值
+        fusion_age = max_age if max_age is not None else self.max_fusion_age
+        packet_threshold = min_packets if min_packets is not None else self.min_packet_count
+
         age = time.time() - self.first_seen
-        return age >= max_age or self.packet_count >= 3
+        return age >= fusion_age or self.packet_count >= packet_threshold
 
     def merge_with(self, new_device) -> object:
         """🔥 融合新报文到当前设备"""
@@ -70,10 +86,26 @@ class LLDPCapture:
     - 自动缓存同设备多报文
     - 智能融合提升数据完整性
     - 减少重复设备发现
+
+    🔥 优化D: 消除神奇数字，支持参数配置
     """
 
-    def __init__(self):
-        """Initialize capture engine"""
+    def __init__(self,
+                 fusion_interval: float = 5.0,
+                 min_packet_count: int = 3,
+                 capture_timeout: int = 2):
+        """
+        Initialize capture engine
+
+        🔥 优化D: 所有神奇数字都变成可配置参数
+
+        Args:
+            fusion_interval: 融合时间窗口（秒），默认5秒
+                           工业交换机建议30秒（LLDP发包间隔）
+            min_packet_count: 最小报文数量，默认3个
+                              工业交换机建议1个（低频发包）
+            capture_timeout: 捕获超时时间（秒），默认2秒
+        """
         if not HAS_SCAPY:
             raise RuntimeError("Scapy is required. Install with: pip install scapy")
 
@@ -83,10 +115,19 @@ class LLDPCapture:
         self.is_capturing = False
         self.capture_thread: Optional[threading.Thread] = None
 
-        # 🔥 新增：设备缓存机制
+        # 🔥 新增：设备缓存机制（可配置参数）
         self.device_cache: Dict[str, DeviceCacheEntry] = {}  # key: device_id
         self.cache_lock = threading.Lock()  # 缓存锁
-        self.fusion_interval = 5.0  # 融合时间窗口（秒）
+        self.fusion_interval = fusion_interval  # 融合时间窗口（可配置）
+        self.min_packet_count = min_packet_count  # 最小报文数量（可配置）
+        self.capture_timeout = capture_timeout  # 捕获超时（可配置）
+
+        # 🔥 预定义配置文件
+        self.config_presets = {
+            'standard': {'fusion_interval': 5.0, 'min_packet_count': 3},  # 标准网络设备
+            'industrial': {'fusion_interval': 30.0, 'min_packet_count': 1},  # 工业交换机
+            'fast': {'fusion_interval': 2.0, 'min_packet_count': 5},  # 快速发现模式
+        }
 
     def _get_device_id(self, device) -> str:
         """
@@ -125,8 +166,8 @@ class LLDPCapture:
                 cache_entry.last_seen = current_time
                 cache_entry.packet_count += 1
 
-                # 🔥 检查是否应该融合并输出
-                if cache_entry.should_fuse(self.fusion_interval):
+                # 🔥 检查是否应该融合并输出（使用可配置参数）
+                if cache_entry.should_fuse(self.fusion_interval, self.min_packet_count):
                     # 融合完成，输出设备
                     fused_device = cache_entry.merge_with(device)
 
@@ -375,12 +416,34 @@ class LLDPCapture:
             print(f"[DEBUG] Will stop immediately when device found!", flush=True)
             print(f"[DEBUG] Packet handler registered, waiting for packets...", flush=True)
 
-            # 定义stop函数：发现设备或停止时返回True
+            # 🔥 优化B: 使用更好的stop_filter机制，避免线程挂起
             def stop_filter(pkt):
-                # 如果发现设备或停止捕获，立即停止
-                if device_found or not self.is_capturing:
-                    print(f"[DEBUG] 🛑 Stop condition triggered! Ending capture...", flush=True)
+                """
+                🔥 优化的停止过滤器
+
+                优先级：
+                1. 用户主动停止（is_capturing = False）
+                2. 发现设备（device_found = True）
+                3. 超时（elapsed > duration）
+
+                返回True表示立即停止抓包
+                """
+                # 优先级1: 用户主动停止
+                if not self.is_capturing:
+                    print(f"[DEBUG] 🛑 User requested stop! Ending capture...", flush=True)
                     return True
+
+                # 优先级2: 发现设备
+                if device_found:
+                    print(f"[DEBUG] ✅ Device found! Ending capture...", flush=True)
+                    return True
+
+                # 优先级3: 超时检查
+                elapsed = time.time() - start_time
+                if elapsed >= duration:
+                    print(f"[DEBUG] ⏱️ Timeout reached ({duration}s)! Ending capture...", flush=True)
+                    return True
+
                 return False
 
             # 🔥 macOS兼容性修复：处理接口名称和权限问题

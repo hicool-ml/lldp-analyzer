@@ -268,11 +268,23 @@ class LLDPProfessionalWindow(QWidget):
 
     def _set_window_icon(self):
         """
-        Set window icon from file
+        🔥 Set window icon from file (Enhanced with Windows taskbar support)
 
         优化C: 使用pathlib.Path进行跨平台路径处理
+        🔥 新增: Windows任务栏图标修复 - AppUserModelID
         """
         from PyQt6.QtGui import QIcon
+        import platform
+
+        # 🔥 Windows任务栏图标修复：设置AppUserModelID
+        if platform.system() == 'Windows':
+            try:
+                import ctypes
+                app_id = 'com.hicool.lldpanalyzer.300'  # v3.0 App ID
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+                print(f"[DEBUG] ✅ Windows AppUserModelID set: {app_id}")
+            except Exception as e:
+                print(f"[WARNING] Failed to set Windows AppUserModelID: {e}")
 
         # 查找图标文件 - 使用pathlib.Path
         meipass = getattr(sys, '_MEIPASS', '')
@@ -295,12 +307,13 @@ class LLDPProfessionalWindow(QWidget):
                 try:
                     icon = QIcon(str(icon_path))  # QIcon需要字符串路径
                     self.setWindowIcon(icon)
+                    print(f"[DEBUG] ✅ Window icon loaded: {icon_path}")
                     return
-                except Exception:
+                except Exception as e:
+                    print(f"[WARNING] Failed to load icon {icon_path}: {e}")
                     continue
 
-        # 如果没有找到图标文件，使用默认图标
-        pass
+        print(f"[WARNING] No icon file found, using default icon")
 
     def setup_ui(self):
         """Setup user interface"""
