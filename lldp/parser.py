@@ -1,8 +1,11 @@
 """
 LLDP Protocol Parser
 Pure function parser - No side effects, no UI dependencies
+
+🔥 安全修复：TLV边界检查、标准兼容性、Management Address解析
 """
 
+import logging
 from typing import Optional, List
 from .model import (
     LLDPDevice,
@@ -15,6 +18,12 @@ from .model import (
     ChassisIDType,
     PortIDType,
 )
+
+# 🔥 新增：日志记录器替代print
+logger = logging.getLogger(__name__)
+
+# 🔥 新增：安全配置常量
+MAX_TLV_LENGTH = 4096  # 最大TLV长度，防止恶意包攻击
 
 
 class LLDPParser:
@@ -72,7 +81,7 @@ class LLDPParser:
 
     def parse_packet(self, packet_data: bytes) -> Optional[LLDPDevice]:
         """
-        Parse LLDP packet data
+        🔥 安全修复版：Parse LLDP packet data with proper boundary checking
 
         Args:
             packet_data: Raw LLDP packet bytes (after Ether header)
@@ -82,25 +91,44 @@ class LLDPParser:
         """
         device = LLDPDevice()
 
-        print(f"[DEBUG] ========== LLDP Packet Parsing ==========")
-        print(f"[DEBUG] Total packet length: {len(packet_data)} bytes")
-        print(f"[DEBUG] Raw packet: {packet_data.hex()}")
+        logger.debug("========== LLDP Packet Parsing ==========")
+        logger.debug(f"Total packet length: {len(packet_data)} bytes")
+        logger.debug(f"Raw packet: {packet_data.hex()}")
 
         try:
             ptr = 0
             tlv_count = 0
-            while ptr + 2 <= len(packet_data):
+            remaining = len(packet_data)
+
+            # 🔥 安全修复：更严格的边界检查
+            while remaining >= 2:  # 至少需要TLV header (2 bytes)
                 # Parse TLV header
                 typ = (packet_data[ptr] >> 1) & 0x7F
                 length = ((packet_data[ptr] & 1) << 8) | packet_data[ptr + 1]
-                val = packet_data[ptr + 2:ptr + 2 + length]
-                ptr += 2 + length
 
+                # 🔥 安全修复：检查TLV长度是否合法
+                if length > MAX_TLV_LENGTH:
+                    logger.error(f"TLV length {length} exceeds maximum {MAX_TLV_LENGTH}")
+                    return None
+
+                # 🔥 安全修复：检查是否有足够的数据读取完整TLV
+                if remaining < 2 + length:
+                    logger.error(f"Incomplete TLV: need {2 + length} bytes, only {remaining} remaining")
+                    return None
+
+                val = packet_data[ptr + 2:ptr + 2 + length]
+
+                # 🔥 安全修复：End of LLDPDU (type=0) 立即停止解析
+                if typ == 0:
+                    logger.debug(f"TLV #{tlv_count}: End of LLDPDU, stopping parsing")
+                    break
+
+                ptr += 2 + length
+                remaining -= 2 + length
                 tlv_count += 1
 
                 # Debug: Show all TLVs
                 tlv_names = {
-                    0: "End of LLDPDU",
                     1: "Chassis ID",
                     2: "Port ID",
                     3: "Time To Live",
@@ -112,13 +140,13 @@ class LLDPParser:
                     127: "Organizationally Specific"
                 }
                 tlv_name = tlv_names.get(typ, f"Unknown ({typ})")
-                print(f"[DEBUG] TLV #{tlv_count}: Type={typ} ({tlv_name}), Length={length}, Value={val.hex()[:50]}...")
+                logger.debug(f"TLV #{tlv_count}: Type={typ} ({tlv_name}), Length={length}, Value={val.hex()[:50]}...")
 
                 # Process TLV
                 self._parse_tlv(device, typ, val)
 
-            print(f"[DEBUG] Total TLVs parsed: {tlv_count}")
-            print(f"[DEBUG] =======================================")
+            logger.debug(f"Total TLVs parsed: {tlv_count}")
+            logger.debug("=======================================")
 
             # 🔧 修复：在所有TLV解析完成后，重新关联VLAN名称
             self._associate_vlan_names(device)
@@ -126,7 +154,7 @@ class LLDPParser:
             return device if device.is_valid() else None
 
         except Exception as e:
-            print(f"[ERROR] Parse error: {e}")
+            logger.error(f"Parse error: {e}", exc_info=True)  # 🔥 新增：记录完整traceback
             return None
 
     def parse_scapy_packet(self, scapy_pkt) -> Optional[LLDPDevice]:
@@ -317,21 +345,29 @@ class LLDPParser:
         return LLDPPortID(value=formatted_value, type=port_type)
 
     def _parse_capabilities(self, val: bytes) -> DeviceCapabilities:
-        """Parse System Capabilities TLV"""
+        """
+        🔥 RFC标准修复版：Parse System Capabilities TLV
+
+        按照IEEE 802.1AB标准：
+        - 前2字节 = supported capabilities
+        - 后2字节 = enabled capabilities (如果存在)
+        总共4字节，不是8字节！
+        """
         caps = DeviceCapabilities()
 
-        print(f"[DEBUG] _parse_capabilities called, TLV length: {len(val)}")
-        print(f"[DEBUG] Raw TLV bytes: {val.hex()}")
-        print(f"[DEBUG] Individual bytes: {[f'0x{b:02x}' for b in val[:12]]}")  # Show first 12 bytes
+        logger.debug(f"_parse_capabilities called, TLV length: {len(val)}")
+        logger.debug(f"Raw TLV bytes: {val.hex()}")
+        logger.debug(f"Individual bytes: {[f'0x{b:02x}' for b in val[:12]]}")
 
+        # 🔥 RFC标准修复：至少需要4字节（2字节supported + 2字节enabled）
         if len(val) >= 4:
-            # System Capabilities (bytes 0-3) - 设备支持的能力
-            sys_cap = int.from_bytes(val[0:4], 'big')
-            print(f"[DEBUG] System Capabilities (hex): 0x{sys_cap:08x}")
-            print(f"[DEBUG] System Capabilities (bin): {sys_cap:032b}")
+            # 🔥 修复：按照RFC标准，前2字节是supported capabilities
+            supported = int.from_bytes(val[0:2], 'big')
+            logger.debug(f"Supported Capabilities (hex): 0x{supported:04x}")
+            logger.debug(f"Supported Capabilities (bin): {supported:016b}")
 
             # IEEE 802.1AB标准能力位定义
-            # Bit 0: Other (可选)
+            # Bit 0: Other
             # Bit 1: Repeater
             # Bit 2: Bridge/Switch ← 标准的交换机位
             # Bit 3: WLAN Access Point
@@ -342,60 +378,52 @@ class LLDPParser:
             # Bit 8: Customer VLAN
             # Bit 9: Customer Bridge
             # Bit 10: Service VLAN
+            # Bit 11-15: Reserved
 
-            caps.bridge = bool(sys_cap & (1 << 2))      # Bit 2 = Bridge (交换机)
-            caps.repeater = bool(sys_cap & (1 << 1))
-            caps.wlan = bool(sys_cap & (1 << 3))        # Bit 3 = WLAN
-            caps.router = bool(sys_cap & (1 << 4))      # Bit 4 = Router
-            caps.telephone = bool(sys_cap & (1 << 5))   # Bit 5 = Telephone
-            caps.docsis = bool(sys_cap & (1 << 6))
-            caps.station = bool(sys_cap & (1 << 7))
-            caps.c_vlan = bool(sys_cap & (1 << 8))
-            caps.c_bridge = bool(sys_cap & (1 << 9))
-            caps.s_vlan = bool(sys_cap & (1 << 10))
+            caps.bridge = bool(supported & (1 << 2))      # Bit 2 = Bridge (交换机)
+            caps.repeater = bool(supported & (1 << 1))
+            caps.wlan = bool(supported & (1 << 3))        # Bit 3 = WLAN
+            caps.router = bool(supported & (1 << 4))      # Bit 4 = Router
+            caps.telephone = bool(supported & (1 << 5))   # Bit 5 = Telephone
+            caps.docsis = bool(supported & (1 << 6))
+            caps.station = bool(supported & (1 << 7))
+            caps.c_vlan = bool(supported & (1 << 8))
+            caps.c_bridge = bool(supported & (1 << 9))
+            caps.s_vlan = bool(supported & (1 << 10))
 
-            print(f"[DEBUG] Parsed capabilities (per IEEE 802.1AB):")
-            print(f"  - Other (bit 0): {bool(sys_cap & 1)}")
-            print(f"  - Repeater (bit 1): {caps.repeater}")
-            print(f"  - Bridge/Switch (bit 2): {caps.bridge}")
-            print(f"  - WLAN Access Point (bit 3): {caps.wlan}")
-            print(f"  - Router (bit 4): {caps.router}")
-            print(f"  - Telephone (bit 5): {caps.telephone}")
-            print(f"  - DOCSIS (bit 6): {caps.docsis}")
-            print(f"  - Station (bit 7): {caps.station}")
-            print(f"  - Customer VLAN (bit 8): {caps.c_vlan}")
-            print(f"  - Customer Bridge (bit 9): {caps.c_bridge}")
-            print(f"  - Service VLAN (bit 10): {caps.s_vlan}")
+            logger.debug(f"Parsed capabilities (per IEEE 802.1AB):")
+            logger.debug(f"  - Other (bit 0): {bool(supported & 1)}")
+            logger.debug(f"  - Repeater (bit 1): {caps.repeater}")
+            logger.debug(f"  - Bridge/Switch (bit 2): {caps.bridge}")
+            logger.debug(f"  - WLAN Access Point (bit 3): {caps.wlan}")
+            logger.debug(f"  - Router (bit 4): {caps.router}")
+            logger.debug(f"  - Telephone (bit 5): {caps.telephone}")
+            logger.debug(f"  - DOCSIS (bit 6): {caps.docsis}")
+            logger.debug(f"  - Station (bit 7): {caps.station}")
+            logger.debug(f"  - Customer VLAN (bit 8): {caps.c_vlan}")
+            logger.debug(f"  - Customer Bridge (bit 9): {caps.c_bridge}")
+            logger.debug(f"  - Service VLAN (bit 10): {caps.s_vlan}")
 
-            # Enabled Capabilities (bytes 4-7) - 当前启用的能力
-            if len(val) >= 8:
-                en_cap = int.from_bytes(val[4:8], 'big')
-                print(f"[DEBUG] Enabled Capabilities (hex): 0x{en_cap:08x}")
-                print(f"[DEBUG] Enabled Capabilities (bin): {en_cap:032b}")
+            # 🔥 RFC标准修复：后2字节是enabled capabilities
+            enabled = int.from_bytes(val[2:4], 'big')
+            logger.debug(f"Enabled Capabilities (hex): 0x{enabled:04x}")
+            logger.debug(f"Enabled Capabilities (bin): {enabled:016b}")
 
-                caps.bridge_enabled = bool(en_cap & (1 << 2))      # Bit 2
-                caps.repeater_enabled = bool(en_cap & (1 << 1))
-                caps.wlan_enabled = bool(en_cap & (1 << 3))
-                caps.router_enabled = bool(en_cap & (1 << 4))
-                caps.telephone_enabled = bool(en_cap & (1 << 5))
-                caps.docsis_enabled = bool(en_cap & (1 << 6))
-                caps.station_enabled = bool(en_cap & (1 << 7))
-                caps.c_vlan_enabled = bool(en_cap & (1 << 8))
-                caps.c_bridge_enabled = bool(en_cap & (1 << 9))
-                caps.s_vlan_enabled = bool(en_cap & (1 << 10))
-            else:
-                # 如果没有启用能力字段，默认所有支持的能力都启用
-                print(f"[DEBUG] No enabled capabilities field, assuming all supported are enabled")
-                caps.bridge_enabled = caps.bridge
-                caps.repeater_enabled = caps.repeater
-                caps.wlan_enabled = caps.wlan
-                caps.router_enabled = caps.router
-                caps.telephone_enabled = caps.telephone
-                caps.docsis_enabled = caps.docsis
-                caps.station_enabled = caps.station
-                caps.c_vlan_enabled = caps.c_vlan
-                caps.c_bridge_enabled = caps.c_bridge
-                caps.s_vlan_enabled = caps.s_vlan
+            caps.bridge_enabled = bool(enabled & (1 << 2))      # Bit 2
+            caps.repeater_enabled = bool(enabled & (1 << 1))
+            caps.wlan_enabled = bool(enabled & (1 << 3))
+            caps.router_enabled = bool(enabled & (1 << 4))
+            caps.telephone_enabled = bool(enabled & (1 << 5))
+            caps.docsis_enabled = bool(enabled & (1 << 6))
+            caps.station_enabled = bool(enabled & (1 << 7))
+            caps.c_vlan_enabled = bool(enabled & (1 << 8))
+            caps.c_bridge_enabled = bool(enabled & (1 << 9))
+            caps.s_vlan_enabled = bool(enabled & (1 << 10))
+
+        else:
+            logger.warning(f"Capabilities TLV too short: {len(val)} bytes (need at least 4)")
+
+        return caps
                 caps.twamp_enabled = caps.twamp
 
         # Debug: Show what will be displayed
@@ -405,55 +433,59 @@ class LLDPParser:
         return caps
 
     def _parse_management_address(self, val: bytes) -> Optional[str]:
-        """Parse Management Address TLV"""
-        if len(val) < 5:
+        """
+        🔥 IEEE 802.1AB标准修复版：Parse Management Address TLV
+
+        按照IEEE 802.1AB标准：
+        - octet 0: management address string length (1 byte)
+        - octets 1..N: management address (variable, length = previous value)
+        - following: interface subtype (1 octet), interface number (4 octets), OID string length (1 octet), OID (variable)
+        """
+        if len(val) < 1:
             return None
 
-        print(f"[DEBUG] Management Address TLV raw: {val.hex()}")
-        print(f"[DEBUG] Management Address TLV length: {len(val)}")
+        logger.debug(f"Management Address TLV raw: {val.hex()}")
+        logger.debug(f"Management Address TLV length: {len(val)}")
 
         try:
-            # Management Address TLV格式 (RFC 802.1AB)
-            # Address family (1 byte): 1=IPv4, 2=IPv6, other=reserved
-            addr_family = val[0]
-            # Address length (1 byte): 地址长度
-            addr_len = val[1]
+            # 🔥 修复：按照IEEE 802.1AB标准
+            addr_str_len = val[0]  # 第1字节：地址字符串长度
 
-            print(f"[DEBUG] Address family: {addr_family}, Address length: {addr_len}")
+            # 边界检查
+            if addr_str_len == 0 or 1 + addr_str_len > len(val):
+                logger.warning(f"Invalid management address length: {addr_str_len}")
+                return None
 
-            # IPv4 (family 1, length should be 4)
-            if addr_family == 1 and addr_len == 4 and len(val) >= 6:
-                ipv4_bytes = val[2:6]
-                return ".".join(map(str, ipv4_bytes))
+            # 提取管理地址
+            addr_bytes = val[1:1 + addr_str_len]
 
-            # IPv6 (family 2, length should be 16)
-            elif addr_family == 2 and addr_len == 16 and len(val) >= 18:
-                ipv6_bytes = val[2:18]
-                # IPv6地址格式化
-                ipv6_groups = [ipv6_bytes[i:i+2].hex() for i in range(0, 16, 2)]
-                return ":".join(ipv6_groups)
+            # 根据长度判断地址类型
+            # IPv4: 4字节
+            if addr_str_len == 4:
+                ipv4 = ".".join(map(str, addr_bytes))
+                logger.debug(f"Management IPv4 address: {ipv4}")
+                return ipv4
 
-            # MAC地址或其他格式 (family 4-6)
-            elif addr_family >= 4 and addr_len == 6 and len(val) >= 8:
-                mac_bytes = val[2:8]
-                formatted_mac = self._format_mac(mac_bytes.hex())
-                print(f"[DEBUG] Management address as MAC: {formatted_mac}")
-                return formatted_mac
+            # IPv6: 16字节
+            elif addr_str_len == 16:
+                ipv6_groups = [addr_bytes[i:i+2].hex() for i in range(0, 16, 2)]
+                ipv6 = ":".join(ipv6_groups)
+                logger.debug(f"Management IPv6 address: {ipv6}")
+                return ipv6
 
-            # 如果无法识别，尝试从后面查找IP地址
-            elif len(val) >= 6:
-                # 尝试查找IPv4地址模式
-                for i in range(len(val) - 3):
-                    if val[i] >= 1 and val[i] <= 255 and val[i+1] >= 1 and val[i+1] <= 255:
-                        potential_ip = f"{val[i]}.{val[i+1]}.{val[i+2]}.{val[i+3]}"
-                        if val[i] != 0 and val[i+3] != 0:
-                            print(f"[DEBUG] Found potential IPv4: {potential_ip}")
-                            return potential_ip
+            # MAC地址: 6字节
+            elif addr_str_len == 6:
+                mac = self._format_mac(addr_bytes.hex())
+                logger.debug(f"Management MAC address: {mac}")
+                return mac
 
-        except Exception as e:
-            print(f"[DEBUG] Failed to parse management address: {e}")
+            else:
+                logger.warning(f"Unknown management address type, length: {addr_str_len}")
+                return None
 
-        return None
+        except (IndexError, ValueError) as e:
+            logger.error(f"Failed to parse management address: {e}", exc_info=True)
+            return None
 
     def _parse_org_specific_tlv(self, device: LLDPDevice, val: bytes):
         """Parse Organizationally Specific TLV (TLV 127)"""
