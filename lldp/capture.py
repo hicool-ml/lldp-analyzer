@@ -20,7 +20,7 @@ log = logging.getLogger("lldp.capture")
 MAX_HEX_DISPLAY = 200
 
 try:
-    from scapy.all import sniff, Ether
+    from scapy.all import Ether
     HAS_SCAPY = True
 except ImportError:
     HAS_SCAPY = False
@@ -135,6 +135,19 @@ class LLDPCapture:
             'industrial': {'fusion_interval': 30.0, 'min_packet_count': 1},  # 工业交换机
             'fast': {'fusion_interval': 2.0, 'min_packet_count': 5},  # 快速发现模式
         }
+
+    def _safe_callback(self, callback, device):
+        """
+        🔥 安全包装回调函数，捕获并记录异常
+
+        Args:
+            callback: 用户回调函数
+            device: 设备对象
+        """
+        try:
+            callback(device)
+        except Exception:
+            log.exception("Device callback raised exception")
 
     def _get_device_id(self, device) -> str:
         """
@@ -386,7 +399,7 @@ class LLDPCapture:
                             if callback:
                                 try:
                                     log.debug("Submitting device callback to thread pool...")
-                                    self._callback_pool.submit(callback, device)
+                                    self._callback_pool.submit(self._safe_callback, callback, device)
                                     log.debug("Device callback submitted successfully")
                                 except Exception as e:
                                     log.exception("Failed to submit callback: %s", e)
@@ -497,9 +510,13 @@ class LLDPCapture:
                         break
                     time_module.sleep(0.1)  # 100ms轮询间隔
 
-                # 🔥 优雅停止：不会阻塞UI线程
-                sniffer.stop()
-                log.debug("✅ AsyncSniffer stopped gracefully")
+                # 🔥 改进：检查 sniffer.running 再停止
+                if hasattr(sniffer, 'running') and sniffer.running:
+                    log.debug("Stopping AsyncSniffer (running=True)...")
+                    sniffer.stop()
+                    log.debug("✅ AsyncSniffer stopped gracefully")
+                else:
+                    log.debug("AsyncSniffer already stopped (running=False)")
 
             except Exception as capture_error:
                 log.error("❌ Capture failed with exception: %s", capture_error, exc_info=True)
@@ -651,7 +668,10 @@ class LLDPCaptureListener:
         # Start completion timer
         def completion_timer():
             """Wait for capture to complete"""
-            self.capture.capture_thread.join()
+            log.debug("Waiting for capture thread to finish (timeout=%ds)...", duration + 5)
+            self.capture.capture_thread.join(timeout=duration + 5)
+            if self.capture.capture_thread.is_alive():
+                log.warning("Capture thread still alive after timeout, calling complete_callback anyway")
             complete_callback()
 
         threading.Thread(target=completion_timer, daemon=True).start()
