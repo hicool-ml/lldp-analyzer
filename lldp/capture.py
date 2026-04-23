@@ -52,6 +52,9 @@ class DeviceCacheEntry:
     max_fusion_age: float = 5.0  # 融合时间窗口（秒）
     min_packet_count: int = 3   # 最小报文数量
 
+    # 🔥 优化A: 防止重复触发
+    is_processed: bool = False  # 是否已被处理（输出或回调）
+
     def should_fuse(self, max_age: float = None, min_packets: int = None) -> bool:
         """
         判断是否应该进行融合
@@ -200,6 +203,9 @@ class LLDPCapture:
                         fusion_count=cache_entry.packet_count
                     )
 
+                    # 🔥 防止重复触发：标记为已处理
+                    cache_entry.is_processed = True
+
                     # 清理缓存
                     del self.device_cache[device_id]
 
@@ -222,12 +228,25 @@ class LLDPCapture:
 
     def flush_cache(self):
         """
-        🔥 强制刷新缓存 - 输出所有缓存的设备
+        🔥 优化A: 强制刷新缓存 - 返回所有缓存的设备
 
-        用于捕获结束时输出未完成融合的设备
+        改进：
+        - 返回设备列表（不仅仅放入队列）
+        - 标记 is_processed 防止重复触发
+        - 线程安全（使用锁保护）
+
+        Returns:
+            List[CaptureResult]: 所有缓存设备的列表
         """
+        results = []
+
         with self.cache_lock:
             for device_id, cache_entry in list(self.device_cache.items()):
+                # 🔥 防止重复触发
+                if cache_entry.is_processed:
+                    continue
+
+                # 创建结果对象
                 result = CaptureResult(
                     device=cache_entry.device,
                     timestamp=cache_entry.first_seen,
@@ -235,10 +254,18 @@ class LLDPCapture:
                     is_fused=True if cache_entry.packet_count > 1 else False,
                     fusion_count=cache_entry.packet_count
                 )
+
+                # 标记为已处理
+                cache_entry.is_processed = True
+                results.append(result)
+
+                # 输出到队列（保持向后兼容）
                 self.device_queue.put(result)
 
             # 清空缓存
             self.device_cache.clear()
+
+        return results
 
     def start_capture(self, interface, duration: int = 60, callback: Optional[Callable] = None):
         """
@@ -398,9 +425,13 @@ class LLDPCapture:
                             # 🔥 中等优先级修复6: 使用线程池异步执行回调，避免阻塞捕获线程
                             if callback:
                                 try:
-                                    log.debug("Submitting device callback to thread pool...")
-                                    self._callback_pool.submit(self._safe_callback, callback, device)
-                                    log.debug("Device callback submitted successfully")
+                                    # 🔥 优化A: 线程池安全性检查
+                                    if hasattr(self._callback_pool, '_shutdown') and self._callback_pool._shutdown:
+                                        log.warning("Callback pool already shutdown, skipping callback")
+                                    else:
+                                        log.debug("Submitting device callback to thread pool...")
+                                        self._callback_pool.submit(self._safe_callback, callback, device)
+                                        log.debug("Device callback submitted successfully")
                                 except Exception as e:
                                     log.exception("Failed to submit callback: %s", e)
 
@@ -541,13 +572,25 @@ class LLDPCapture:
 
             self.is_capturing = False
 
-    def stop_capture(self):
-        """Stop ongoing capture - Force stop!"""
+    def stop_capture(self) -> list:
+        """
+        🔥 优化A: Stop ongoing capture and flush cache
+
+        改进：
+        - 返回所有缓存设备的列表
+        - 线程池安全性检查
+        - 解决"数据漏显"问题
+
+        Returns:
+            List[CaptureResult]: 所有缓存设备的列表（包括未完成融合的）
+        """
         log.debug("🛑 stop_capture called - Stopping capture NOW!")
         self.is_capturing = False
 
-        # 🔥 v3.0: 停止时刷新缓存
-        self.flush_cache()
+        # 🔥 优化A: 停止时刷新缓存并返回结果
+        log.debug("🔥 Flushing device cache...")
+        flushed_devices = self.flush_cache()
+        log.info("✅ Flushed %d devices from cache", len(flushed_devices))
 
         # 🔥 低优先级修复11: 增加超时时间从2秒到5秒
         if self.capture_thread and self.capture_thread.is_alive():
@@ -558,12 +601,21 @@ class LLDPCapture:
             else:
                 log.debug("✅ Capture thread stopped successfully")
 
+        return flushed_devices
+
     def shutdown(self):
         """
         🔥 新增：清理资源
 
         停止线程池，释放资源
+
+        🔥 优化A: 添加线程池安全性检查
         """
+        # 🔥 线程池安全性：检查是否已 shutdown
+        if hasattr(self._callback_pool, '_shutdown') and self._callback_pool._shutdown:
+            log.debug("Callback pool already shutdown")
+            return
+
         try:
             # 🔥 修复：Python 3.11 不支持 timeout 参数
             self._callback_pool.shutdown(wait=True)

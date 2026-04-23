@@ -3,31 +3,33 @@ Hybrid LLDP/CDP Capture using dpkt for CDP
 Optimized version: dpkt(195KB) vs Scapy(2.6MB) = 13x smaller!
 
 ⚠️ Current Implementation:
-- Requires Scapy for packet capture (sniff)
-- dpkt support is planned but not yet implemented
-- For dpkt-only capture, would need to implement raw socket or pcapy integration
+- Requires Scapy for packet capture (AsyncSniffer)
+- dpkt-only capture is not yet implemented
+- Uses AsyncSniffer for reliable stop behavior
 
 🔥 Recent Improvements:
-- Added Scapy availability check in start_capture
+- Consistent Scapy requirement in __init__ and start_capture
+- Replaced sniff with AsyncSniffer for better platform compatibility
 - Replaced all print statements with logging
 - Added ThreadPoolExecutor for async callback execution
 - Improved exception handling with log.exception
 - Increased stop_capture timeout to 5 seconds
 """
 
+from typing import Optional, Callable, Any, Union
 import queue
 import threading
 import time
 import logging
-from typing import Optional, Callable
 from dataclasses import dataclass
 from concurrent.futures import ThreadPoolExecutor
 
 # Logger for capture_dpkt module
 log = logging.getLogger("lldp.capture_dpkt")
 
-# 🔥 限制 hex 输出长度，防止日志膨胀
-MAX_HEX_DISPLAY = 200
+# Type aliases for better type hints
+LLDPDevice = Any  # Would be lldp.models.LLDPDevice if imported
+CDPDevice = Any   # Would be lldp.cdp.models.CDPDevice if imported
 
 try:
     import dpkt
@@ -36,7 +38,7 @@ except ImportError:
     HAS_DPKT = False
 
 try:
-    from scapy.all import sniff, Ether
+    from scapy.all import AsyncSniffer  # 🔥 改用 AsyncSniffer
     HAS_SCAPY = True
 except ImportError:
     HAS_SCAPY = False
@@ -47,8 +49,15 @@ from .cdp.parser import CDPParser
 
 @dataclass
 class CaptureResult:
-    """Result of LLDP packet capture"""
-    device: object  # LLDPDevice | CDPDevice (Any for flexibility)
+    """
+    Result of LLDP packet capture
+
+    Attributes:
+        device: LLDPDevice or CDPDevice instance
+        timestamp: Capture timestamp (Unix timestamp)
+        interface: Network interface name
+    """
+    device: Union[LLDPDevice, CDPDevice]
     timestamp: float
     interface: str
 
@@ -63,9 +72,21 @@ class HybridCapture:
     """
 
     def __init__(self):
-        """Initialize capture engine"""
-        if not HAS_SCAPY and not HAS_DPKT:
-            raise RuntimeError("Either Scapy or dpkt is required")
+        """
+        Initialize capture engine
+
+        ⚠️ 当前实现要求 Scapy 必须可用
+
+        Raises:
+            RuntimeError: 如果 Scapy 不可用
+        """
+        # 🔥 修复 dpkt 路径一致性：init 也要求 Scapy
+        if not HAS_SCAPY:
+            raise RuntimeError(
+                "Scapy is required for HybridCapture; "
+                "install with `pip install scapy`. "
+                "dpkt-only capture is not yet implemented."
+            )
 
         self.lldp_parser = LLDPParser()
         self.cdp_parser_dpkt = CDPParser()  # Existing parser
@@ -113,7 +134,11 @@ class HybridCapture:
         self.capture_thread.start()
 
     def _capture_worker(self, interface, duration: int, callback: Optional[Callable]):
-        """Capture worker thread using Scapy for everything (for now)"""
+        """
+        Capture worker thread using AsyncSniffer
+
+        🔥 改进：使用 AsyncSniffer 替代 sniff，提供更可靠的停止机制
+        """
         try:
             log.info("========== HYBRID CAPTURE STARTED ==========")
             log.info("Interface: %s", interface)
@@ -125,7 +150,7 @@ class HybridCapture:
             start_time = time.time()
 
             def packet_handler(pkt):
-                """Handle each captured packet - Scapy version (reliable)"""
+                """Handle each captured packet"""
                 nonlocal packet_count, device_found
                 packet_count += 1
 
@@ -184,7 +209,7 @@ class HybridCapture:
                         log.debug("Device found! Stopping capture...")
                         self.is_capturing = False
 
-                        # 🔥 高优先级修复3：使用线程池异步执行回调，避免阻塞捕获线程
+                        # 使用线程池异步执行回调
                         if callback:
                             try:
                                 log.debug("Submitting device callback to thread pool...")
@@ -196,22 +221,43 @@ class HybridCapture:
                 except Exception as e:
                     log.exception("Error in packet_handler: %s", e)
 
+            # 🔥 改进：使用 AsyncSniffer 而不是 sniff
             log.info("Starting packet capture on %s...", interface)
             log.info("Capture timeout: %ds (max)", duration)
+            log.debug("Packet handler registered, waiting for packets...")
 
-            def stop_filter(pkt):
-                if device_found or not self.is_capturing:
-                    log.debug("Stop condition triggered!")
-                    return True
-                return False
+            # 创建 BPF 过滤器
+            bpf_filter = "ether proto 0x88cc or ether host 01:00:0c:cc:cc:cc"
 
-            sniff(
+            # 创建异步嗅探器
+            sniffer = AsyncSniffer(
                 iface=interface,
+                filter=bpf_filter,
                 prn=packet_handler,
-                timeout=duration,
                 store=False,
-                stop_filter=stop_filter
+                started_callback=lambda: log.debug("AsyncSniffer started on %s", interface)
             )
+
+            # 启动异步嗅探
+            sniffer.start()
+
+            # 等待捕获完成或设备发现
+            import time as time_module
+            start_time = time_module.time()
+
+            while time_module.time() - start_time < duration:
+                if device_found or not self.is_capturing:
+                    log.debug("Stop condition triggered, stopping AsyncSniffer...")
+                    break
+                time_module.sleep(0.1)  # 100ms轮询间隔
+
+            # 🔥 优雅停止：检查 running 状态
+            if hasattr(sniffer, 'running') and sniffer.running:
+                log.debug("Stopping AsyncSniffer (running=True)...")
+                sniffer.stop()
+                log.debug("AsyncSniffer stopped gracefully")
+            else:
+                log.debug("AsyncSniffer already stopped (running=False)")
 
             log.info("Capture completed. Total packets: %d", packet_count)
             if device_found:

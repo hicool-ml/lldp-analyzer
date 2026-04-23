@@ -156,7 +156,39 @@ class LLDPParser:
         return b'\x00\x05\x5d'
 
     def __init__(self):
-        """Initialize parser"""
+        """
+        Initialize parser
+
+        🔥 优化B: 使用策略模式，引入 TLV 处理器映射表
+        """
+        # 🔥 优化B: TLV 类型映射表（策略模式）
+        self._TLV_HANDLERS = {
+            0: None,  # End of LLDPDU，特殊处理
+            1: self._handle_chassis_id,
+            2: self._handle_port_id,
+            3: self._handle_time_to_live,
+            4: self._handle_port_description,
+            5: self._handle_system_name,
+            6: self._handle_system_description,
+            7: self._handle_system_capabilities,
+            8: self._handle_management_address,
+            127: self._handle_org_specific_tlv,  # Organizationally Specific TLV
+        }
+
+        # TLV 名称映射（用于调试日志）
+        self._TLV_NAMES = {
+            0: "End of LLDPDU",
+            1: "Chassis ID",
+            2: "Port ID",
+            3: "Time To Live",
+            4: "Port Description",
+            5: "System Name",
+            6: "System Description",
+            7: "System Capabilities",
+            8: "Management Address",
+            127: "Organizationally Specific"
+        }
+
         pass
 
     def parse_packet(self, packet_data: bytes) -> Optional[LLDPDevice]:
@@ -208,22 +240,12 @@ class LLDPParser:
                 tlv_count += 1
 
                 # Debug: Show all TLVs
-                tlv_names = {
-                    1: "Chassis ID",
-                    2: "Port ID",
-                    3: "Time To Live",
-                    4: "Port Description",
-                    5: "System Name",
-                    6: "System Description",
-                    7: "System Capabilities",
-                    8: "Management Address",
-                    127: "Organizationally Specific"
-                }
-                tlv_name = tlv_names.get(typ, f"Unknown ({typ})")
-                logger.debug(f"TLV #{tlv_count}: Type={typ} ({tlv_name}), Length={length}, Value={val[:MAX_HEX_DISPLAY].hex()}...")
+                tlv_name = self._TLV_NAMES.get(typ, f"Unknown ({typ})")
+                logger.debug("TLV #%d: Type=%d (%s), Length=%d, Value=%s...",
+                           tlv_count, typ, tlv_name, length, val[:MAX_HEX_DISPLAY].hex())
 
-                # Process TLV
-                self._parse_tlv(device, typ, val)
+                # 🔥 优化B: 使用策略模式处理 TLV
+                self._dispatch_tlv(device, typ, val)
 
             logger.debug(f"Total TLVs parsed: {tlv_count}")
             logger.debug("=======================================")
@@ -264,53 +286,82 @@ class LLDPParser:
             logger.exception("Scapy packet parsing error: %s", e)
             return None
 
-    def _parse_tlv(self, device: LLDPDevice, typ: int, val: bytes):
-        """Parse individual TLV and update device model"""
+    def _dispatch_tlv(self, device: LLDPDevice, typ: int, val: bytes):
+        """
+        🔥 优化B: 使用策略模式分发 TLV 到对应的处理器
 
-        # TLV 0: End of LLDPDU
-        if typ == 0:
+        Args:
+            device: LLDPDevice 实例
+            typ: TLV 类型
+            val: TLV 值
+        """
+        # 从映射表中获取处理器
+        handler = self._TLV_HANDLERS.get(typ)
+
+        if handler is None:
+            # TLV 0: End of LLDPDU，不需要处理
+            if typ == 0:
+                return
+            # 未知的 TLV 类型
+            logger.debug("Unknown TLV type %d, skipping", typ)
             return
 
-        # TLV 1: Chassis ID
-        elif typ == 1:
-            device.chassis_id = self._parse_chassis_id(val)
+        # 调用对应的处理器
+        handler(device, val)
 
-        # TLV 2: Port ID
-        elif typ == 2:
-            device.port_id = self._parse_port_id(val)
+    # ========== TLV 处理器方法 ==========
 
-        # TLV 3: Time To Live
-        elif typ == 3:
-            if len(val) >= 2:
-                device.ttl = int.from_bytes(val, 'big')
+    def _handle_chassis_id(self, device: LLDPDevice, val: bytes):
+        """处理 TLV 1: Chassis ID"""
+        device.chassis_id = self._parse_chassis_id(val)
 
-        # TLV 4: Port Description
-        elif typ == 4:
-            device.port_description = val.decode("utf-8", errors="ignore").strip()
+    def _handle_port_id(self, device: LLDPDevice, val: bytes):
+        """处理 TLV 2: Port ID"""
+        device.port_id = self._parse_port_id(val)
 
-        # TLV 5: System Name
-        elif typ == 5:
-            device.system_name = val.decode("utf-8", errors="ignore").strip()
+    def _handle_time_to_live(self, device: LLDPDevice, val: bytes):
+        """处理 TLV 3: Time To Live"""
+        if len(val) >= 2:
+            device.ttl = int.from_bytes(val, 'big')
 
-        # TLV 6: System Description
-        elif typ == 6:
-            system_desc = val.decode("utf-8", errors="ignore").strip()
-            device.system_description = system_desc
+    def _handle_port_description(self, device: LLDPDevice, val: bytes):
+        """处理 TLV 4: Port Description"""
+        device.port_description = val.decode("utf-8", errors="ignore").strip()
 
-            # Extract device model from system description
-            self._extract_device_model(device, system_desc)
+    def _handle_system_name(self, device: LLDPDevice, val: bytes):
+        """处理 TLV 5: System Name"""
+        device.system_name = val.decode("utf-8", errors="ignore").strip()
 
-        # TLV 7: System Capabilities
-        elif typ == 7:
-            device.capabilities = self._parse_capabilities(val)
+    def _handle_system_description(self, device: LLDPDevice, val: bytes):
+        """处理 TLV 6: System Description"""
+        system_desc = val.decode("utf-8", errors="ignore").strip()
+        device.system_description = system_desc
 
-        # TLV 8: Management Address
-        elif typ == 8:
-            device.management_ip = self._parse_management_address(val)
+        # Extract device model from system description
+        self._extract_device_model(device, system_desc)
 
-        # TLV 127: Organizationally Specific
-        elif typ == 127:
-            self._parse_org_specific_tlv(device, val)
+    def _handle_system_capabilities(self, device: LLDPDevice, val: bytes):
+        """处理 TLV 7: System Capabilities"""
+        device.capabilities = self._parse_capabilities(val)
+
+    def _handle_management_address(self, device: LLDPDevice, val: bytes):
+        """处理 TLV 8: Management Address"""
+        device.management_ip = self._parse_management_address(val)
+
+    def _handle_org_specific_tlv(self, device: LLDPDevice, val: bytes):
+        """处理 TLV 127: Organizationally Specific"""
+        self._parse_org_specific_tlv(device, val)
+
+    # ========== 原有的解析方法（保持不变）==========
+
+    def _parse_tlv(self, device: LLDPDevice, typ: int, val: bytes):
+        """
+        @deprecated 使用 _dispatch_tlv 替代
+
+        Parse individual TLV and update device model
+        """
+        # 向后兼容：调用新的分发方法
+        self._dispatch_tlv(device, typ, val)
 
     def _extract_device_model(self, device: LLDPDevice, system_description: str):
         """Extract device model from system description"""

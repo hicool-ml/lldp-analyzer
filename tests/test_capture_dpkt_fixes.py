@@ -24,8 +24,21 @@ pytestmark = pytest.mark.skipif(not HAS_SCAPY, reason="Scapy not available")
 class TestScapyRequirement:
     """测试1：Scapy 缺失检查"""
 
-    def test_requires_scapy(self):
-        """验证 start_capture 在没有 Scapy 时抛出 RuntimeError"""
+    def test_requires_scapy_in_init(self):
+        """验证 __init__ 在没有 Scapy 时抛出 RuntimeError"""
+        # 模拟 HAS_SCAPY = False
+        with patch('lldp.capture_dpkt.HAS_SCAPY', False):
+            with pytest.raises(RuntimeError) as exc_info:
+                HybridCapture()
+
+            # 验证错误消息包含提示
+            assert "Scapy is required" in str(exc_info.value)
+            assert "dpkt-only capture is not yet implemented" in str(exc_info.value)
+
+    def test_requires_scapy_in_start_capture(self):
+        """验证 start_capture 在没有 Scapy 时抛出 RuntimeError（防御性检查）"""
+        # 这个测试是防御性的，因为 __init__ 已经会检查
+        # 但如果有人绕过 __init__ 直接调用，仍然会失败
         capture = HybridCapture()
         interface = "eth0"
 
@@ -36,7 +49,20 @@ class TestScapyRequirement:
 
             # 验证错误消息包含提示
             assert "Scapy is required" in str(exc_info.value)
-            assert "pip install scapy" in str(exc_info.value)
+
+    def test_async_sniffer_imported(self):
+        """验证使用 AsyncSniffer 而不是 sniff"""
+        import inspect
+        from lldp import capture_dpkt
+
+        source = inspect.getsource(capture_dpkt)
+
+        # 应该导入 AsyncSniffer
+        assert 'AsyncSniffer' in source, "应该导入 AsyncSniffer"
+
+        # 应该使用 AsyncSniffer 而不是 sniff
+        assert 'AsyncSniffer(' in source, "应该使用 AsyncSniffer"
+        assert source.count('sniff(') == 0, "不应该使用 sniff"
 
 
 class TestLoggerUsage:
@@ -47,12 +73,6 @@ class TestLoggerUsage:
         from lldp import capture_dpkt
         assert hasattr(capture_dpkt, 'log'), "应该有 log 实例"
         assert capture_dpkt.log.name == "lldp.capture_dpkt"
-
-    def test_max_hex_display_defined(self):
-        """验证 MAX_HEX_DISPLAY 常量定义"""
-        from lldp import capture_dpkt
-        assert hasattr(capture_dpkt, 'MAX_HEX_DISPLAY'), "应该定义 MAX_HEX_DISPLAY"
-        assert capture_dpkt.MAX_HEX_DISPLAY == 200, "MAX_HEX_DISPLAY 应该是 200"
 
     def test_no_print_in_capture_dpkt(self):
         """验证 capture_dpkt.py 中没有 print 语句"""
