@@ -407,13 +407,6 @@ class LLDPParser:
                      caps.get_all_capabilities(), caps.get_enabled_capabilities())
 
         return caps
-                caps.twamp_enabled = caps.twamp
-
-        # Debug: Show what will be displayed
-        print(f"[DEBUG] Capabilities to display: {caps.get_all_capabilities()}")
-        print(f"[DEBUG] Enabled capabilities: {caps.get_enabled_capabilities()}")
-
-        return caps
 
     def _parse_management_address(self, val: bytes) -> Optional[str]:
         """
