@@ -271,20 +271,9 @@ class LLDPProfessionalWindow(QWidget):
         🔥 Set window icon from file (Enhanced with Windows taskbar support)
 
         优化C: 使用pathlib.Path进行跨平台路径处理
-        🔥 新增: Windows任务栏图标修复 - AppUserModelID
+        注意: AppUserModelID已在main()中在QApplication创建前设置
         """
         from PyQt6.QtGui import QIcon
-        import platform
-
-        # 🔥 Windows任务栏图标修复：设置AppUserModelID
-        if platform.system() == 'Windows':
-            try:
-                import ctypes
-                app_id = 'com.hicool.lldpanalyzer.300'  # v3.0 App ID
-                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
-                print(f"[DEBUG] ✅ Windows AppUserModelID set: {app_id}")
-            except Exception as e:
-                print(f"[WARNING] Failed to set Windows AppUserModelID: {e}")
 
         # 查找图标文件 - 使用pathlib.Path
         meipass = getattr(sys, '_MEIPASS', '')
@@ -1777,6 +1766,16 @@ def main():
         os.environ['QT_AUTO_SCREEN_SCALE_FACTOR'] = '1'
         os.environ['QT_ENABLE_HIGHDPI_SCALING'] = '1'
         os.environ['QT_SCALE_FACTOR'] = '1'
+
+        # 🔥 关键修复: Windows任务栏图标 - AppUserModelID必须在QApplication创建前设置
+        if os.name == 'nt':  # Windows系统
+            try:
+                import ctypes
+                app_id = 'com.hicool.lldpanalyzer.300'  # v3.0 App ID
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+                print(f"[DEBUG] ✅ Windows AppUserModelID set: {app_id}")
+            except Exception as e:
+                print(f"[WARNING] Failed to set Windows AppUserModelID: {e}")
 
         # 在PyQt6中，High DPI支持默认启用，但我们可以设置一些属性
         from PyQt6.QtWidgets import QApplication
