@@ -51,8 +51,8 @@ def try_decode_text(payload: bytes, encodings: List[str] = None) -> Optional[str
         except (UnicodeDecodeError, LookupError):
             continue
 
-    # 所有编码都失败，返回hex表示
-    return payload[:MAX_HEX_DISPLAY][:MAX_HEX_DISPLAY].hex() if len(payload) > MAX_HEX_DISPLAY else payload[:MAX_HEX_DISPLAY].hex()
+    # 所有编码都失败，返回hex表示（简化）
+    return payload[:MAX_HEX_DISPLAY].hex()
 
 
 class LLDPParser:
@@ -330,7 +330,7 @@ class LLDPParser:
                 # H3C device model pattern (typically on second line)
                 if 'H3C' in line and 'Comware' not in line and len(line) > 10:
                     model = line.strip()
-                    logger.debug("Extracted H3C device model: {model}")
+                    logger.debug("Extracted H3C device model: %s", model)
                     if not hasattr(device, 'device_model'):
                         device.device_model = model
                     break
@@ -338,7 +338,7 @@ class LLDPParser:
                 # Huawei device model pattern
                 elif 'Huawei' in line and 'Technologies' not in line and len(line) > 10:
                     model = line.strip()
-                    logger.debug("Extracted Huawei device model: {model}")
+                    logger.debug("Extracted Huawei device model: %s", model)
                     if not hasattr(device, 'device_model'):
                         device.device_model = model
                     break
@@ -346,7 +346,7 @@ class LLDPParser:
                 # Cisco device model pattern
                 elif 'Cisco' in line and len(line) > 10:
                     model = line.strip()
-                    logger.debug("Extracted Cisco device model: {model}")
+                    logger.debug("Extracted Cisco device model: %s", model)
                     if not hasattr(device, 'device_model'):
                         device.device_model = model
                     break
@@ -366,13 +366,13 @@ class LLDPParser:
                     matches = re.findall(pattern, system_description)
                     if matches:
                         device_model = matches[0]
-                        logger.debug("Extracted device model via pattern: {device_model}")
+                        logger.debug("Extracted device model via pattern: %s", device_model)
                         if not hasattr(device, 'device_model'):
                             device.device_model = device_model
                         break
 
         except Exception as e:
-            logger.debug("Error extracting device model: {e}")
+            logger.debug("Error extracting device model: %s", e)
 
     def _parse_chassis_id(self, val: bytes) -> Optional[LLDPChassisID]:
         """Parse Chassis ID TLV"""
@@ -524,14 +524,14 @@ class LLDPParser:
 
             # IPv6: 16字节
             elif addr_str_len == 16:
-                ipv6_groups = [addr_bytes[i:i+2][:MAX_HEX_DISPLAY].hex() for i in range(0, 16, 2)]
+                ipv6_groups = [addr_bytes[i:i+2].hex() for i in range(0, 16, 2)]
                 ipv6 = ":".join(ipv6_groups)
                 logger.debug(f"Management IPv6 address: {ipv6}")
                 return ipv6
 
             # MAC地址: 6字节
             elif addr_str_len == 6:
-                mac = self._format_mac(addr_bytes[:MAX_HEX_DISPLAY].hex())
+                mac = self._format_mac(addr_bytes.hex())
                 logger.debug(f"Management MAC address: {mac}")
                 return mac
 
@@ -558,7 +558,7 @@ class LLDPParser:
             # 正确的做法：优先尝试解析为IEEE 802.1Q标准TLV（这是大部分厂商使用的）
             # 只有在明确检测到LLDP-MED特征时才使用MED解析器
 
-            logger.debug("IEEE 802.1Q OUI detected, subtype={subtype}")
+            logger.debug("IEEE 802.1Q OUI detected, subtype=%d", subtype)
 
             # 优先使用IEEE 802.1Q标准解析器（包括Port VLAN ID subtype 1）
             self._parse_802_1q_tlv(device, subtype, val)
@@ -570,7 +570,8 @@ class LLDPParser:
         # Vendor-specific TLVs (including H3C, Cisco, Huawei, etc.)
         elif oui in self.VENDOR_OUI_MAP:
             vendor_name = self.VENDOR_OUI_MAP[oui]
-            logger.debug("{vendor_name} Private TLV - OUI: {oui[:MAX_HEX_DISPLAY].hex()}, subtype: {subtype}")
+            logger.debug("%s Private TLV - OUI: %s, subtype: %d",
+                        vendor_name, oui[:MAX_HEX_DISPLAY].hex(), subtype)
 
             # Route to vendor-specific parser
             if oui == self.OUI_VENDOR_H3C or oui == self.OUI_VENDOR_H3C_ALT:
@@ -585,12 +586,12 @@ class LLDPParser:
 
         # Unknown OUI
         else:
-            logger.debug("Unknown OUI: {oui[:MAX_HEX_DISPLAY].hex()}, subtype: {subtype}")
+            logger.debug("Unknown OUI: %s, subtype: %d", oui[:MAX_HEX_DISPLAY].hex(), subtype)
 
     def _parse_802_1q_tlv(self, device: LLDPDevice, subtype: int, val: bytes):
         """Parse IEEE 802.1Q specific TLV"""
-        logger.debug("IEEE 802.1Q TLV - subtype={subtype}, length={len(val)}")
-        logger.debug("Raw TLV data: {val[:MAX_HEX_DISPLAY].hex()}")
+        logger.debug("IEEE 802.1Q TLV - subtype=%d, length=%d", subtype, len(val))
+        logger.debug("Raw TLV data: %s", val[:MAX_HEX_DISPLAY].hex())
 
         # IEEE 802.1Q标准TLV subtype定义：
         # Subtype 1: Port VLAN ID (TLV) ← 这是标准的端口VLAN ID！
@@ -614,17 +615,17 @@ class LLDPParser:
                 # Byte 6+: Optional flags
 
                 vlan_id = int.from_bytes(val[4:6], 'big')
-                logger.debug("✅ Extracted VLAN ID: {vlan_id}")
+                logger.debug("✅ Extracted VLAN ID: %d", vlan_id)
 
                 tagged = False
                 is_pvid = False
 
                 if len(val) >= 7:
                     flags_byte = val[6]
-                    logger.debug("Flags byte: 0x{flags_byte:02x}")
+                    logger.debug("Flags byte: 0x%02x", flags_byte)
                     tagged = bool(flags_byte & 0x01)
                     is_pvid = bool(flags_byte & 0x02)
-                    logger.debug("Tagged: {tagged}, Is PVID: {is_pvid}")
+                    logger.debug("Tagged: %s, Is PVID: %s", tagged, is_pvid)
 
                 # 🔧 修复：不在此时查找VLAN名称（因为VLAN Name TLV可能还没解析）
                 # VLAN名称关联将在所有TLV解析完成后进行
@@ -634,9 +635,9 @@ class LLDPParser:
                     tagged=tagged,
                     is_pvid=is_pvid
                 )
-                logger.debug("✅✅✅ Port VLAN ID {vlan_id} stored to device.port_vlan!")
+                logger.debug("✅✅✅ Port VLAN ID %d stored to device.port_vlan!", vlan_id)
             else:
-                logger.debug("❌ Port VLAN ID TLV too short: {len(val)} bytes")
+                logger.debug("❌ Port VLAN ID TLV too short: %d bytes", len(val))
             return
 
         # Subtype 2: Port Protocol VLAN ID
@@ -644,7 +645,7 @@ class LLDPParser:
             logger.debug("Port Protocol VLAN ID TLV")
             if len(val) >= 6:
                 protocol_vlan_id = int.from_bytes(val[4:6], 'big')
-                logger.debug("Protocol VLAN ID: {protocol_vlan_id}")
+                logger.debug("Protocol VLAN ID: %d", protocol_vlan_id)
                 # 存储到设备对象
                 device.protocol_vlan_id = protocol_vlan_id
 
@@ -690,18 +691,18 @@ class LLDPParser:
 
         # Subtype 8-11: Reserved
         elif 8 <= subtype <= 11:
-            logger.debug("Reserved 802.1Q subtype {subtype}")
+            logger.debug("Reserved 802.1Q subtype %d", subtype)
 
         # Subtype 12: Maximum Frame Size
         elif subtype == 12:
             logger.debug("Maximum Frame Size TLV")
             if len(val) >= 6:
                 device.max_frame_size = int.from_bytes(val[4:6], 'big')
-                logger.debug("Max frame size: {device.max_frame_size} bytes")
+                logger.debug("Max frame size: %d bytes", device.max_frame_size)
 
         # Unknown subtypes
         else:
-            logger.debug("Unknown IEEE 802.1Q subtype {subtype}")
+            logger.debug("Unknown IEEE 802.1Q subtype %d", subtype)
 
     def _parse_802_3_tlv(self, device: LLDPDevice, subtype: int, val: bytes):
         """Parse IEEE 802.3 specific TLV"""
@@ -764,8 +765,8 @@ class LLDPParser:
 
     def _parse_h3c_private_tlv(self, device: LLDPDevice, subtype: int, val: bytes):
         """Parse H3C Private TLV (OUI: 00:12:bb)"""
-        logger.debug("H3C Private TLV - subtype={subtype}, length={len(val)}")
-        logger.debug("H3C Private TLV raw data: {val[:MAX_HEX_DISPLAY].hex()}")
+        logger.debug("H3C Private TLV - subtype=%d, length=%d", subtype, len(val))
+        logger.debug("H3C Private TLV raw data: %s", val[:MAX_HEX_DISPLAY].hex())
 
         # H3C Private TLV subtype mapping table (修正版本)
         H3C_SUBTYPE_MAP = {
@@ -785,8 +786,8 @@ class LLDPParser:
                 subtype_info = H3C_SUBTYPE_MAP[subtype]
                 field_name = subtype_info["field"]
 
-                logger.debug("H3C subtype {subtype} ({subtype_info['name']})")
-                logger.debug("Raw bytes: {val[:MAX_HEX_DISPLAY].hex()}")
+                logger.debug("H3C subtype %d (%s)", subtype, subtype_info['name'])
+                logger.debug("Raw bytes: %s", val[:MAX_HEX_DISPLAY].hex())
 
                 # 提取字符串值 - 🔥 使用try_decode_text工具函数
                 # 跳过OUI和subtype字节 (前4字节)
@@ -799,19 +800,19 @@ class LLDPParser:
                     setattr(device, field_name, string_value if string_value else val[:MAX_HEX_DISPLAY].hex())
 
             else:
-                logger.debug("H3C Unknown subtype {subtype}: {val[:MAX_HEX_DISPLAY].hex()}")
+                logger.debug("H3C Unknown subtype %d: %s", subtype, val[:MAX_HEX_DISPLAY].hex())
 
         except Exception as e:
-            logger.debug("Error parsing H3C private TLV: {e}")
+            logger.debug("Error parsing H3C private TLV: %s", e)
 
     def _parse_cisco_private_tlv(self, device: LLDPDevice, subtype: int, val: bytes):
         """Parse Cisco Private TLV (OUI: 00:00:0c)"""
-        logger.debug("Cisco Private TLV - subtype={subtype}, length={len(val)}")
+        logger.debug("Cisco Private TLV - subtype=%d, length=%d", subtype, len(val))
         # TODO: Implement Cisco-specific TLV parsing
 
     def _parse_huawei_private_tlv(self, device: LLDPDevice, subtype: int, val: bytes):
         """Parse Huawei Private TLV (OUI: 00:1e:ec)"""
-        logger.debug("Huawei Private TLV - subtype={subtype}, length={len(val)}")
+        logger.debug("Huawei Private TLV - subtype=%d, length=%d", subtype, len(val))
         # TODO: Implement Huawei-specific TLV parsing
 
     def _parse_vendor_private_tlv(self, device: LLDPDevice, vendor_name: str, subtype: int, val: bytes):
@@ -846,12 +847,12 @@ class LLDPParser:
         poe = PoEInfo()
         poe.supported = True
 
-        logger.debug("PoE TLV raw data: {val[:MAX_HEX_DISPLAY].hex()}")
+        logger.debug("PoE TLV raw data: %s", val[:MAX_HEX_DISPLAY].hex())
 
         if len(val) >= 4:
             # 第4个字节（index 3）是Port Power Status/Control byte
             port_power_byte = val[3]
-            logger.debug("Port Power byte: 0x{port_power_byte:02x}")
+            logger.debug("Port Power byte: 0x%02x", port_power_byte)
 
             # 解析Port Power字节（IEEE 802.3at标准）
             # Bit 0-1: Power type (00=Type 1, 01=Type 2, 10-11=Reserved)
@@ -890,9 +891,10 @@ class LLDPParser:
                 power_mw = int.from_bytes(val[4:6], 'big')
                 if power_mw > 0 and power_mw < 100000:  # 合理的功率范围
                     poe.power_allocated = power_mw
-                    logger.debug("Power value: {power_mw}mW ({power_mw/1000}W)")
+                    logger.debug("Power value: %dmW (%.1fW)", power_mw, power_mw/1000)
 
-            logger.debug("PoE parsed - Type: {poe.power_type}, Class: {poe.power_class}, Source: {poe.power_source}")
+            logger.debug("PoE parsed - Type: %s, Class: %s, Source: %s",
+                        poe.power_type, poe.power_class, poe.power_source)
 
         return poe
 
@@ -950,39 +952,39 @@ class LLDPParser:
 
     def _parse_lldp_med_tlv(self, device: LLDPDevice, subtype: int, val: bytes):
         """Parse LLDP-MED specific TLV (ANSI/TIA-1057)"""
-        logger.debug("LLDP-MED TLV detected, subtype={subtype}")
+        logger.debug("LLDP-MED TLV detected, subtype=%d", subtype)
 
         # Subtype 1: LLDP-MED Capabilities
         if subtype == 1 and len(val) >= 5:
-            logger.debug("LLDP-MED Capabilities: {val[:MAX_HEX_DISPLAY].hex()}")
+            logger.debug("LLDP-MED Capabilities: %s", val[:MAX_HEX_DISPLAY].hex())
             self._parse_med_capabilities_tlv(device, val)
 
         # Subtype 2: Network Policy
         elif subtype == 2 and len(val) >= 5:
-            logger.debug("LLDP-MED Network Policy: {val[:MAX_HEX_DISPLAY].hex()}")
+            logger.debug("LLDP-MED Network Policy: %s", val[:MAX_HEX_DISPLAY].hex())
             # 可以解析网络策略（VLAN, QoS等），包含VLAN ID和应用类型
 
         # Subtype 3: Power via MDI (PoE信息！)
         elif subtype == 3 and len(val) >= 5:
-            logger.debug("LLDP-MED Power via MDI (PoE): {val[:MAX_HEX_DISPLAY].hex()}")
+            logger.debug("LLDP-MED Power via MDI (PoE): %s", val[:MAX_HEX_DISPLAY].hex())
             self._parse_med_power_tlv(device, val)
 
         # Subtype 4: Inventory (硬件/固件版本)
         elif subtype == 4 and len(val) >= 4:
-            logger.debug("LLDP-MED Inventory: {val[:MAX_HEX_DISPLAY].hex()}")
+            logger.debug("LLDP-MED Inventory: %s", val[:MAX_HEX_DISPLAY].hex())
 
         # Subtype 5-7: Location Identification
         elif 5 <= subtype <= 7:
-            logger.debug("LLDP-MED Location (type={subtype}): {val[:MAX_HEX_DISPLAY].hex()}")
+            logger.debug("LLDP-MED Location (type=%d): %s", subtype, val[:MAX_HEX_DISPLAY].hex())
 
         # Subtype 8: Extended Power via MDI (PoE+)
         elif subtype == 8 and len(val) >= 5:
-            logger.debug("LLDP-MED Extended Power via MDI (PoE+): {val[:MAX_HEX_DISPLAY].hex()}")
+            logger.debug("LLDP-MED Extended Power via MDI (PoE+): %s", val[:MAX_HEX_DISPLAY].hex())
             self._parse_med_extended_power_tlv(device, val)
 
         # 未知subtype
         else:
-            logger.debug("LLDP-MED unknown subtype {subtype}: {val[:MAX_HEX_DISPLAY].hex()}")
+            logger.debug("LLDP-MED unknown subtype %d: %s", subtype, val[:MAX_HEX_DISPLAY].hex())
 
     def _parse_med_capabilities_tlv(self, device: LLDPDevice, val: bytes):
         """Parse LLDP-MED Capabilities TLV (Subtype 1)"""
@@ -1014,8 +1016,8 @@ class LLDPParser:
             if capabilities_byte & 0x20:  # Bit 5
                 capabilities.append("位置识别")
 
-            logger.debug("LLDP-MED Version: {med_version}")
-            logger.debug("LLDP-MED Capabilities: {', '.join(capabilities) if capabilities else '无'}")
+            logger.debug("LLDP-MED Version: %d", med_version)
+            logger.debug("LLDP-MED Capabilities: %s", ', '.join(capabilities) if capabilities else '无')
 
             # Store MED capabilities as device attribute
             if not hasattr(device, 'lldp_med_capabilities'):
@@ -1030,7 +1032,7 @@ class LLDPParser:
                 }
 
         except Exception as e:
-            logger.debug("Error parsing LLDP-MED capabilities: {e}")
+            logger.debug("Error parsing LLDP-MED capabilities: %s", e)
 
     def _parse_med_power_tlv(self, device: LLDPDevice, val: bytes):
         """Parse LLDP-MED Power via MDI TLV (Subtype 3)"""
@@ -1078,9 +1080,10 @@ class LLDPParser:
             power_mw = int.from_bytes(val[5:7], 'big')
             if power_mw > 0:
                 device.poe.power_allocated = power_mw
-                logger.debug("MED PoE+ - Total Power: {power_mw}mW ({power_mw/1000}W)")
+                logger.debug("MED PoE+ - Total Power: %dmW (%.1fW)", power_mw, power_mw/1000)
 
-        logger.debug("MED PoE - Type: {device.poe.power_source}, Priority: {device.poe.power_priority}, Power: {power_value * 0.1}W")
+        logger.debug("MED PoE - Type: %s, Priority: %s, Power: %.1fW",
+                    device.poe.power_source, device.poe.power_priority, power_value * 0.1)
 
     def _parse_med_extended_power_tlv(self, device: LLDPDevice, val: bytes):
         """Parse LLDP-MED Extended Power via MDI TLV (PoE+)"""
@@ -1095,7 +1098,7 @@ class LLDPParser:
             device.poe.supported = True
 
         device.poe.power_allocated = total_power
-        logger.debug("MED Extended PoE+ - Total Power: {total_power}mW ({total_power/1000}W)")
+        logger.debug("MED Extended PoE+ - Total Power: %dmW (%.1fW)", total_power, total_power/1000)
 
     def _associate_vlan_names(self, device: 'LLDPDevice'):
         """
@@ -1110,7 +1113,7 @@ class LLDPParser:
                 if hasattr(v, 'vlan_id') and v.vlan_id == port_vlan_id:
                     if hasattr(v, 'vlan_name') and v.vlan_name and not device.port_vlan.vlan_name:
                         device.port_vlan.vlan_name = v.vlan_name
-                        logger.debug("🔧 Post-parse associated VLAN name: {port_vlan_id} -> {v.vlan_name}")
+                        logger.debug("🔧 Post-parse associated VLAN name: %d -> %s", port_vlan_id, v.vlan_name)
                         break
 
     @staticmethod
