@@ -11,9 +11,13 @@ import time
 import logging
 from typing import Optional, Callable, Dict
 from dataclasses import dataclass, field
+from concurrent.futures import ThreadPoolExecutor
 
 # Logger for capture module
 log = logging.getLogger("lldp.capture")
+
+# 🔥 限制 hex 输出长度，防止日志膨胀
+MAX_HEX_DISPLAY = 200
 
 try:
     from scapy.all import sniff, Ether
@@ -121,6 +125,9 @@ class LLDPCapture:
         self.fusion_interval = fusion_interval  # 融合时间窗口（可配置）
         self.min_packet_count = min_packet_count  # 最小报文数量（可配置）
         self.capture_timeout = capture_timeout  # 捕获超时（可配置）
+
+        # 🔥 中等优先级修复6: 回调线程池，避免阻塞捕获线程
+        self._callback_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="lldp_callback")
 
         # 🔥 预定义配置文件
         self.config_presets = {
@@ -273,15 +280,14 @@ class LLDPCapture:
 
             def packet_handler(pkt):
                 """Handle each captured packet - Enhanced for LLDP + CDP!"""
-                nonlocal packet_count
+                nonlocal packet_count, device_found
                 packet_count += 1
 
                 # 第一个包立即输出，确认捕获工作
                 if packet_count == 1:
-                    print(f"[DEBUG] ✅ First packet received! Capture is working!", flush=True)
-                    print(f"[DEBUG] First packet: {pkt.summary()}", flush=True)
-                    # 🔥 调试：检查callback状态
-                    print(f"[DEBUG] 🔍 Callback parameter: {callback}", flush=True)
+                    log.debug("✅ First packet received! Capture is working!")
+                    log.debug("First packet: %s", pkt.summary())
+                    log.debug("🔍 Callback parameter: %s", callback)
 
                 if not self.is_capturing:
                     return
@@ -290,7 +296,7 @@ class LLDPCapture:
                     # 🔥 减少DEBUG输出频率，从每10个改为每100个
                     if packet_count % 100 == 0:
                         elapsed = time.time() - start_time
-                        print(f"[DEBUG] 📊 Processed {packet_count} packets in {int(elapsed)}s...", flush=True)
+                        log.debug("📊 Processed %d packets in %ds", packet_count, int(elapsed))
 
                     # Convert packet to bytes for protocol detection
                     packet_bytes = bytes(pkt)
@@ -319,102 +325,87 @@ class LLDPCapture:
                     protocol_name = "Unknown"
 
                     if is_lldp:
-                        print(f"\n[DEBUG] 📡 LLDP packet captured!", flush=True)
-                        print(f"[DEBUG] Packet: {pkt.summary()}", flush=True)
+                        log.debug("📡 LLDP packet captured!")
+                        log.debug("Packet: %s", pkt.summary())
                         device = self.lldp_parser.parse_scapy_packet(pkt)
                         protocol_name = "LLDP"
 
                     elif is_cdp:
-                        print(f"\n[DEBUG] 📡📡📡 CDP packet captured! 🔥🔥🔥", flush=True)
-                        print(f"[DEBUG] Packet: {pkt.summary()}", flush=True)
+                        log.debug("📡📡📡 CDP packet captured! 🔥🔥🔥")
+                        log.debug("Packet: %s", pkt.summary())
                         device = self.cdp_parser.parse_scapy_packet(pkt)
                         protocol_name = "CDP"
 
                     if device and device.is_valid():
-                        print(f"[DEBUG] ✅ Valid {protocol_name} device parsed: {device.get_display_name()}")
-                        print(f"[DEBUG] Device object: {device}")
-                        print(f"[DEBUG] Device attributes: {dir(device)[:20]}")
+                        log.debug("✅ Valid %s device parsed: %s", protocol_name, device.get_display_name())
+                        log.debug("Device object: %s", device)
+                        log.debug("Device attributes: %s", dir(device)[:20])
 
                         try:
                             # 🔥 安全设置设备属性 - 检查每个属性是否可安全访问
-                            print(f"[DEBUG] Setting device attributes...")
+                            log.debug("Setting device attributes...")
 
                             # For CDP, highlight Native VLAN
                             if protocol_name == "CDP" and hasattr(device, 'native_vlan') and device.native_vlan:
-                                print(f"[DEBUG] 🔥🔥🔥 CDP Native VLAN detected: {device.native_vlan} 🔥🔥🔥")
+                                log.debug("🔥🔥🔥 CDP Native VLAN detected: %s 🔥🔥🔥", device.native_vlan)
 
                             # 安全设置capture_interface
                             try:
                                 device.capture_interface = str(interface)
-                                print(f"[DEBUG] ✅ capture_interface set to: {str(interface)}")
+                                log.debug("✅ capture_interface set to: %s", str(interface))
                             except Exception as e:
-                                print(f"[ERROR] Failed to set capture_interface: {e}")
+                                log.warning("Failed to set capture_interface: %s", e)
 
                             # 安全设置protocol - 这可能是崩溃点！
                             try:
                                 device.protocol = protocol_name
-                                print(f"[DEBUG] ✅ protocol set to: {protocol_name}")
+                                log.debug("✅ protocol set to: %s", protocol_name)
                             except Exception as e:
-                                print(f"[ERROR] Failed to set protocol: {e}")
-                                import traceback
-                                traceback.print_exc()
+                                log.error("Failed to set protocol: %s", e, exc_info=True)
 
-                            print(f"[DEBUG] Device attributes set successfully")
+                            log.debug("Device attributes set successfully")
 
                             # 🔥 v3.0: 使用设备缓存机制
-                            print(f"[DEBUG] 📦 Caching device for fusion...")
+                            log.debug("📦 Caching device for fusion...")
                             should_output = self._cache_device(device, str(interface))
 
                             if should_output:
                                 # 融合完成，输出到队列
-                                print(f"[DEBUG] 🔥 Device fusion complete! Outputting to queue...")
-                                print(f"[DEBUG] Capture result pushed to queue (fused)")
+                                log.debug("🔥 Device fusion complete! Outputting to queue...")
+                                log.debug("Capture result pushed to queue (fused)")
 
                                 # 🔥 设备发现！立即停止捕获
-                                nonlocal device_found
                                 device_found = True
-                                print(f"[DEBUG] 🎯 Device found! Stopping capture immediately...", flush=True)
+                                log.debug("🎯 Device found! Stopping capture immediately...")
                                 self.is_capturing = False  # 停止捕获标志
-
-                                # Call callback if provided (runs in capture thread)
-                                if callback:
-                                    try:
-                                        callback(device)
-                                    except Exception as e:
-                                        log.error(f"Callback error: {e}")
                             else:
-                                print(f"[DEBUG] Device cached, waiting for more packets...")
+                                log.debug("Device cached, waiting for more packets...")
 
-                            # Call callback if provided (runs in capture thread)
+                            # 🔥 修复：只调用一次 callback（无论是否融合）
+                            # 🔥 中等优先级修复6: 使用线程池异步执行回调，避免阻塞捕获线程
                             if callback:
                                 try:
-                                    print(f"[DEBUG] Calling device callback...")
-                                    callback(device)
-                                    print(f"[DEBUG] Device callback completed successfully")
+                                    log.debug("Submitting device callback to thread pool...")
+                                    self._callback_pool.submit(callback, device)
+                                    log.debug("Device callback submitted successfully")
                                 except Exception as e:
-                                    print(f"[ERROR] Callback failed: {e}")
-                                    import traceback
-                                    traceback.print_exc()
-                            else:
-                                print(f"[DEBUG] ⚠️ No callback provided!")
+                                    log.exception("Failed to submit callback: %s", e)
 
                         except Exception as e:
-                            print(f"[ERROR] Error in device processing: {e}")
-                            import traceback
-                            traceback.print_exc()
+                            log.exception("Error in device processing: %s", e)
                     else:
                         if is_lldp or is_cdp:
-                            print(f"[DEBUG] ❌ {protocol_name} packet parsed but device is not valid")
+                            log.debug("❌ %s packet parsed but device is not valid", protocol_name)
 
                 except Exception as e:
-                    print(f"[ERROR] Error in packet_handler: {e}")
+                    log.exception("Error in packet_handler: %s", e)
 
             # Start sniffing - No BPF filter! Capture everything and filter in Python
             # 这样可以确保捕获到CDP和LLDP报文
-            print(f"[DEBUG] Starting packet capture on {interface}...", flush=True)
-            print(f"[DEBUG] Capture timeout: {duration}s (max)", flush=True)
-            print(f"[DEBUG] Will stop immediately when device found!", flush=True)
-            print(f"[DEBUG] Packet handler registered, waiting for packets...", flush=True)
+            log.info("Starting packet capture on %s...", interface)
+            log.info("Capture timeout: %ds (max)", duration)
+            log.info("Will stop immediately when device found!")
+            log.debug("Packet handler registered, waiting for packets...")
 
             # 🔥 优化B: 使用更好的stop_filter机制，避免线程挂起
             def stop_filter(pkt):
@@ -430,18 +421,18 @@ class LLDPCapture:
                 """
                 # 优先级1: 用户主动停止
                 if not self.is_capturing:
-                    print(f"[DEBUG] 🛑 User requested stop! Ending capture...", flush=True)
+                    log.debug("🛑 User requested stop! Ending capture...")
                     return True
 
                 # 优先级2: 发现设备
                 if device_found:
-                    print(f"[DEBUG] ✅ Device found! Ending capture...", flush=True)
+                    log.debug("✅ Device found! Ending capture...")
                     return True
 
                 # 优先级3: 超时检查
                 elapsed = time.time() - start_time
                 if elapsed >= duration:
-                    print(f"[DEBUG] ⏱️ Timeout reached ({duration}s)! Ending capture...", flush=True)
+                    log.debug("⏱️ Timeout reached (%ds)! Ending capture...", duration)
                     return True
 
                 return False
@@ -450,7 +441,7 @@ class LLDPCapture:
             try:
                 # 尝试获取接口对象
                 iface_name = str(interface)
-                print(f"[DEBUG] Using interface: {iface_name}", flush=True)
+                log.debug("Using interface: %s", iface_name)
 
                 # 检查接口是否有效
                 from scapy.all import get_working_ifaces
@@ -458,13 +449,13 @@ class LLDPCapture:
                 iface_names = [str(iface) for iface in working_ifaces]
 
                 if iface_name not in iface_names:
-                    print(f"[DEBUG] ⚠️ Interface {iface_name} not in working interfaces!", flush=True)
-                    print(f"[DEBUG] Available interfaces: {iface_names}", flush=True)
+                    log.warning("⚠️ Interface %s not in working interfaces!", iface_name)
+                    log.warning("Available interfaces: %s", iface_names)
 
                     # 尝试使用第一个可用接口
                     if iface_names:
                         iface_name = iface_names[0]
-                        print(f"[DEBUG] 🔧 Falling back to interface: {iface_name}", flush=True)
+                        log.warning("🔧 Falling back to interface: %s", iface_name)
 
                 # 🔥 性能优化：使用AsyncSniffer替代sniff，解决假死问题
                 from scapy.all import AsyncSniffer
@@ -472,14 +463,26 @@ class LLDPCapture:
                 # 创建BPF过滤器：内核层过滤，减少CPU开销
                 bpf_filter = "ether proto 0x88cc or ether host 01:00:0c:cc:cc:cc"
 
-                # 创建异步嗅探器
-                sniffer = AsyncSniffer(
-                    iface=iface_name,
-                    filter=bpf_filter,  # 🔥 包采样计数器：BPF内核过滤
-                    prn=packet_handler,
-                    store=False,  # 不存储报文，节省内存
-                    started_callback=lambda: print(f"[DEBUG] ✅ AsyncSniffer started on {iface_name}", flush=True)
-                )
+                # 🔥 中等优先级修复5: BPF filter 兼容性处理
+                try:
+                    # 创建异步嗅探器
+                    sniffer = AsyncSniffer(
+                        iface=iface_name,
+                        filter=bpf_filter,  # 🔥 包采样计数器：BPF内核过滤
+                        prn=packet_handler,
+                        store=False,  # 不存储报文，节省内存
+                        started_callback=lambda: log.debug("✅ AsyncSniffer started on %s", iface_name)
+                    )
+                except Exception as bpf_error:
+                    log.warning("BPF filter not supported on this platform: %s", bpf_error)
+                    log.warning("Falling back to no filter (Python-side filtering)")
+                    # Fallback: 不使用 BPF filter
+                    sniffer = AsyncSniffer(
+                        iface=iface_name,
+                        prn=packet_handler,
+                        store=False,
+                        started_callback=lambda: log.debug("✅ AsyncSniffer started on %s (no filter)", iface_name)
+                    )
 
                 # 启动异步嗅探
                 sniffer.start()
@@ -490,52 +493,74 @@ class LLDPCapture:
 
                 while time_module.time() - start_time < duration:
                     if device_found or not self.is_capturing:
-                        print(f"[DEBUG] 🛑 Stop condition triggered, stopping AsyncSniffer...", flush=True)
+                        log.debug("🛑 Stop condition triggered, stopping AsyncSniffer...")
                         break
                     time_module.sleep(0.1)  # 100ms轮询间隔
 
                 # 🔥 优雅停止：不会阻塞UI线程
                 sniffer.stop()
-                print(f"[DEBUG] ✅ AsyncSniffer stopped gracefully", flush=True)
+                log.debug("✅ AsyncSniffer stopped gracefully")
 
             except Exception as capture_error:
-                print(f"[ERROR] ❌ Capture failed with exception: {capture_error}", flush=True)
-                print(f"[ERROR] This might be a permission or interface issue", flush=True)
-                print(f"[ERROR] Try running with sudo/admin privileges", flush=True)
+                log.error("❌ Capture failed with exception: %s", capture_error, exc_info=True)
+                log.error("This might be a permission or interface issue")
+                log.error("Try running with sudo/admin privileges")
                 raise
 
-            print(f"[DEBUG] Capture completed. Total packets processed: {packet_count}", flush=True)
+            log.info("Capture completed. Total packets processed: %d", packet_count)
             if device_found:
-                print(f"[DEBUG] ✅ Capture stopped early - Device found!", flush=True)
+                log.info("✅ Capture stopped early - Device found!")
             else:
-                print(f"[DEBUG] ⏱️ Capture timeout - No device found in {duration}s", flush=True)
+                log.info("⏱️ Capture timeout - No device found in %ds", duration)
 
         except Exception as e:
-            print(f"Capture error: {e}")
+            log.exception("Capture error: %s", e)
 
         finally:
             # 🔥 v3.0: 捕获结束，刷新缓存
-            print(f"[DEBUG] 🔥 Flushing device cache...", flush=True)
+            log.debug("🔥 Flushing device cache...")
             self.flush_cache()
-            print(f"[DEBUG] ✅ Device cache flushed", flush=True)
+            log.debug("✅ Device cache flushed")
 
             self.is_capturing = False
 
     def stop_capture(self):
         """Stop ongoing capture - Force stop!"""
-        print(f"[DEBUG] 🛑 stop_capture called - Stopping capture NOW!", flush=True)
+        log.debug("🛑 stop_capture called - Stopping capture NOW!")
         self.is_capturing = False
 
         # 🔥 v3.0: 停止时刷新缓存
         self.flush_cache()
 
+        # 🔥 低优先级修复11: 增加超时时间从2秒到5秒
         if self.capture_thread and self.capture_thread.is_alive():
-            print(f"[DEBUG] Waiting for capture thread to stop...", flush=True)
-            self.capture_thread.join(timeout=2)  # 等待最多2秒
+            log.debug("Waiting for capture thread to stop...")
+            self.capture_thread.join(timeout=5)  # 等待最多5秒
             if self.capture_thread.is_alive():
-                print(f"[DEBUG] ⚠️ Capture thread still alive after 2s", flush=True)
+                log.warning("⚠️ Capture thread still alive after 5s")
             else:
-                print(f"[DEBUG] ✅ Capture thread stopped successfully", flush=True)
+                log.debug("✅ Capture thread stopped successfully")
+
+    def shutdown(self):
+        """
+        🔥 新增：清理资源
+
+        停止线程池，释放资源
+        """
+        try:
+            # 🔥 修复：Python 3.11 不支持 timeout 参数
+            self._callback_pool.shutdown(wait=True)
+            log.debug("Callback pool shutdown completed")
+        except Exception as e:
+            log.warning("Error shutting down callback pool: %s", e)
+
+    def __del__(self):
+        """析构函数：确保资源清理"""
+        try:
+            if hasattr(self, '_callback_pool'):
+                self._callback_pool.shutdown(wait=False)
+        except Exception:
+            pass
 
     def get_discovered_devices(self) -> list:
         """
@@ -598,17 +623,13 @@ class LLDPCaptureListener:
                     # Call user callback in UI thread
                     if on_device_discovered:
                         try:
-                            print(f"[DEBUG] 🎯 Calling on_device_discovered callback...")
+                            log.debug("🎯 Calling on_device_discovered callback...")
                             on_device_discovered(device)
-                            print(f"[DEBUG] ✅ on_device_discovered callback completed")
+                            log.debug("✅ on_device_discovered callback completed")
                         except Exception as e:
-                            print(f"[ERROR] on_device_discovered callback failed: {e}")
-                            import traceback
-                            traceback.print_exc()
+                            log.exception("on_device_discovered callback failed: %s", e)
             except Exception as e:
-                print(f"[ERROR] device_callback failed: {e}")
-                import traceback
-                traceback.print_exc()
+                log.exception("device_callback failed: %s", e)
 
         def complete_callback():
             """Internal completion callback"""
@@ -616,17 +637,13 @@ class LLDPCaptureListener:
                 if on_capture_complete:
                     try:
                         devices = list(self.discovered_devices.values())
-                        print(f"[DEBUG] 🎯 Calling on_capture_complete callback with {len(devices)} devices...")
+                        log.debug("🎯 Calling on_capture_complete callback with %d devices...", len(devices))
                         on_capture_complete(devices)
-                        print(f"[DEBUG] ✅ on_capture_complete callback completed")
+                        log.debug("✅ on_capture_complete callback completed")
                     except Exception as e:
-                        print(f"[ERROR] on_capture_complete callback failed: {e}")
-                        import traceback
-                        traceback.print_exc()
+                        log.exception("on_capture_complete callback failed: %s", e)
             except Exception as e:
-                print(f"[ERROR] complete_callback failed: {e}")
-                import traceback
-                traceback.print_exc()
+                log.exception("complete_callback failed: %s", e)
 
         # Start capture
         self.capture.start_capture(interface, duration, device_callback)
