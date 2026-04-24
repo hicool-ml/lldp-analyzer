@@ -71,9 +71,12 @@ class PCAPBackend(BaseBackend):
     def open(self, bpf_filter: str = "") -> None:
         # open_live(iface, snaplen, promisc, read_timeout_ms)
         self.pcap = pcapy.open_live(self.interface, self.snaplen, int(self.promisc), int(self.timeout_ms))
+        log.info("✅ Opened pcap on %s, snaplen=%d, promisc=%d, timeout_ms=%d",
+                 self.interface, self.snaplen, self.promisc, self.timeout_ms)
         if bpf_filter:
             try:
                 self.pcap.setfilter(bpf_filter)
+                log.info("✅ BPF filter set: %s", bpf_filter)
             except Exception:
                 log.exception("Failed to set BPF filter: %s", bpf_filter)
 
@@ -151,6 +154,7 @@ class AFPacketBackend(BaseBackend):
         self.sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0003))
         try:
             self.sock.bind((self.interface, 0))
+            log.info("✅ Opened AF_PACKET socket on %s", self.interface)
         except PermissionError:
             # 🔧 友好化异常消息：提供解决方案
             raise PermissionError(
@@ -159,7 +163,11 @@ class AFPacketBackend(BaseBackend):
             )
         except Exception as e:
             log.exception("Failed to bind AF_PACKET socket to interface %s", self.interface)
-            raise RuntimeError(f"Failed to bind AF_PACKET socket to {self.interface}: {e}")
+            raise RuntimeError(
+                f"Failed to bind AF_PACKET socket to {self.interface}: {e}\n"
+                f"Hint: Ensure you have CAP_NET_RAW capability or run with sudo.\n"
+                f"Command: sudo setcap cap_net_raw+ep $(which python)"
+            )
         self.sock.settimeout(self.timeout)
 
     def loop(self, on_packet: Callable, timeout: Optional[int] = None) -> None:

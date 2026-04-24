@@ -90,6 +90,10 @@ class HybridCapture:
         if self.is_capturing:
             raise RuntimeError("Capture already in progress")
 
+        # 🔧 重置metrics（支持多轮capture）
+        for key in self.metrics:
+            self.metrics[key] = 0
+
         # choose backend
         backend = choose_backend(interface)
         if backend is None:
@@ -146,7 +150,9 @@ class HybridCapture:
             if device and device.is_valid():
                 self.metrics["parsed"] += 1
                 device.capture_interface = getattr(self.backend, 'interface', 'unknown')
-                device.protocol = protocol
+                # 🔧 避免覆盖解析器已设置的protocol字段
+                if not getattr(device, 'protocol', None):
+                    device.protocol = protocol
                 result = CaptureResult(device=device, timestamp=time.time(), interface=device.capture_interface)
                 # enqueue to thread-safe queue
                 self.device_queue.put(result)
@@ -267,6 +273,17 @@ class HybridCapture:
                 log.warning("Capture thread still alive after timeout")
 
     def shutdown(self):
+        """Shutdown capture and release all resources."""
+        # 🔧 确保backend被stop/close（双重保险）
+        try:
+            if self.backend:
+                self.backend.stop()
+                self.backend.close()
+                self.backend = None
+        except Exception:
+            log.exception("Error closing backend in shutdown")
+
+        # 关闭线程池
         try:
             if hasattr(self._callback_pool, 'shutdown'):
                 self._callback_pool.shutdown(wait=True)
@@ -274,7 +291,15 @@ class HybridCapture:
             log.exception("Error shutting down callback pool")
 
     def get_discovered_devices(self) -> List[CaptureResult]:
-        """Drain queue and return all discovered devices (thread-safe)"""
+        """Drain queue and return all discovered devices (thread-safe).
+
+        ⚠️  IMPORTANT: This call will clear the internal queue!
+        All devices returned by this call are removed from the internal queue.
+        Subsequent calls will only return newly discovered devices.
+
+        Returns:
+            List[CaptureResult]: List of discovered devices, cleared from internal queue
+        """
         devices = []
         try:
             while True:
