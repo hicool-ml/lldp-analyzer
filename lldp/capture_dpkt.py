@@ -7,9 +7,10 @@ is available. It keeps the public API compatible with previous LLDPCapture
 so the UI code does not need to change.
 """
 import logging
+import queue
 import time
 import threading
-from typing import Optional, Callable
+from typing import Optional, Callable, List
 
 log = logging.getLogger("lldp.capture_dpkt")
 
@@ -29,9 +30,10 @@ except Exception:
     HAS_PCAPY = False
 
 try:
-    from scapy.all import sniff, Ether
+    from scapy.all import sniff
     HAS_SCAPY = True
 except Exception:
+    sniff = None
     HAS_SCAPY = False
 
 from .parser import LLDPParser
@@ -52,7 +54,7 @@ class HybridCapture:
     def __init__(self):
         self.lldp_parser = LLDPParser()
         self.cdp_parser = CDPParser()
-        self.device_queue = []  # simple list queue for now
+        self.device_queue: queue.Queue = queue.Queue()  # Thread-safe queue
         self.is_capturing = False
         self.capture_thread: Optional[threading.Thread] = None
         self._callback_pool = threading.Thread  # placeholder for API compatibility
@@ -133,8 +135,8 @@ class HybridCapture:
                 device.capture_interface = getattr(self.backend, 'interface', 'unknown')
                 device.protocol = protocol
                 result = CaptureResult(device=device, timestamp=time.time(), interface=device.capture_interface)
-                # enqueue
-                self.device_queue.append(result)
+                # enqueue to thread-safe queue
+                self.device_queue.put(result)
 
                 # async callback
                 if self._current_callback:
@@ -168,7 +170,7 @@ class HybridCapture:
 
     def _scapy_worker(self, interface, duration: int, callback: Optional[Callable]):
         # minimal scapy fallback (keeps compatibility)
-        from scapy.all import sniff
+        from scapy.all import sniff, Ether
 
         def pkt_handler(pkt):
             try:
@@ -190,7 +192,7 @@ class HybridCapture:
                         # 根据设备类型推断协议
                         device.protocol = 'LLDP' if hasattr(device, 'chassis_id') else 'CDP'
                     res = CaptureResult(device=device, timestamp=time.time(), interface=str(interface))
-                    self.device_queue.append(res)
+                    self.device_queue.put(res)  # Thread-safe enqueue
                     if callback:
                         if hasattr(self._callback_pool, 'submit'):
                             self._callback_pool.submit(self._safe_callback, callback, device)
@@ -215,10 +217,10 @@ class HybridCapture:
         except Exception:
             log.exception("Failed to stop backend")
 
-        # flush cache-like behavior: currently device_queue holds results; if any caching layer exists upstream it should be flushed here
-        # submit callbacks for queued devices if callback exists
+        # flush queue and submit callbacks for queued devices (thread-safe)
         if self._current_callback:
-            for res in list(self.device_queue):
+            flushed = self.get_discovered_devices()
+            for res in flushed:
                 try:
                     if hasattr(self._callback_pool, 'submit'):
                         self._callback_pool.submit(self._safe_callback, self._current_callback, res.device)
@@ -240,11 +242,15 @@ class HybridCapture:
         except Exception:
             log.exception("Error shutting down callback pool")
 
-    def get_discovered_devices(self):
-        res = list(self.device_queue)
-        # clear queue
-        self.device_queue.clear()
-        return res
+    def get_discovered_devices(self) -> List[CaptureResult]:
+        """Drain queue and return all discovered devices (thread-safe)"""
+        devices = []
+        try:
+            while True:
+                devices.append(self.device_queue.get_nowait())
+        except queue.Empty:
+            pass
+        return devices
 
     def is_active(self):
         return self.is_capturing
