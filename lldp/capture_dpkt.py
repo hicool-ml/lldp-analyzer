@@ -63,6 +63,15 @@ class HybridCapture:
         self.backend: Optional[BaseBackend] = None
         self._current_callback: Optional[Callable] = None
 
+        # 📊 运行指标（可观测性）
+        self.metrics = {
+            "rx_packets": 0,        # 接收的总包数
+            "parsed": 0,            # 成功解析的设备数
+            "parse_errors": 0,      # 解析失败数
+            "callbacks": 0,         # 回调触发次数
+            "filtered": 0           # 快速过滤跳过的包数
+        }
+
         # lightweight thread pool replacement using concurrent.futures if available
         try:
             from concurrent.futures import ThreadPoolExecutor
@@ -117,6 +126,8 @@ class HybridCapture:
 
     def _handle_dpkt_eth(self, eth):
         """Common handler for dpkt.ethernet.Ethernet frames"""
+        self.metrics["rx_packets"] += 1
+
         try:
             # LLDP Ethertype 0x88cc
             if getattr(eth, "type", None) == 0x88cc:
@@ -129,9 +140,11 @@ class HybridCapture:
                 device = self.cdp_parser.parse_packet(payload) if hasattr(self.cdp_parser, 'parse_packet') else None
                 protocol = "CDP"
             else:
+                self.metrics["filtered"] += 1
                 return
 
             if device and device.is_valid():
+                self.metrics["parsed"] += 1
                 device.capture_interface = getattr(self.backend, 'interface', 'unknown')
                 device.protocol = protocol
                 result = CaptureResult(device=device, timestamp=time.time(), interface=device.capture_interface)
@@ -140,6 +153,7 @@ class HybridCapture:
 
                 # async callback
                 if self._current_callback:
+                    self.metrics["callbacks"] += 1
                     if hasattr(self._callback_pool, 'submit'):
                         try:
                             self._callback_pool.submit(self._safe_callback, self._current_callback, device)
@@ -151,8 +165,11 @@ class HybridCapture:
                             self._safe_callback(self._current_callback, device)
                         except Exception:
                             log.exception("Callback failed")
+            else:
+                self.metrics["parse_errors"] += 1
 
         except Exception:
+            self.metrics["parse_errors"] += 1
             log.exception("Error handling dpkt ethernet frame")
 
     def _backend_worker(self, duration: int):
@@ -210,12 +227,17 @@ class HybridCapture:
 
     def stop_capture(self):
         self.is_capturing = False
-        # stop backend if present
+
+        # 🔧 资源泄露防护：确保backend.close()在所有路径被调用
         try:
             if self.backend:
                 self.backend.stop()
+                self.backend.close()
         except Exception:
-            log.exception("Failed to stop backend")
+            log.exception("Failed to stop/close backend")
+        finally:
+            # 清理backend引用，防止重复调用
+            self.backend = None
 
         # flush queue and submit callbacks for queued devices (thread-safe)
         if self._current_callback:
@@ -228,6 +250,15 @@ class HybridCapture:
                         self._safe_callback(self._current_callback, res.device)
                 except Exception:
                     log.exception("Failed to submit flush callback")
+
+            # 🔧 防止重复提交：清理callback引用
+            self._current_callback = None
+
+        # 📊 打印运行指标
+        log.info("📊 Capture metrics: rx_packets=%d, parsed=%d, parse_errors=%d, callbacks=%d, filtered=%d",
+                 self.metrics["rx_packets"], self.metrics["parsed"],
+                 self.metrics["parse_errors"], self.metrics["callbacks"],
+                 self.metrics["filtered"])
 
         # wait for thread to finish
         if self.capture_thread and self.capture_thread.is_alive():

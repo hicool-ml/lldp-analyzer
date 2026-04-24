@@ -92,8 +92,16 @@ class PCAPBackend(BaseBackend):
                 log.exception("pcapy next() failed")
                 continue
 
-            if not payload:
+            if not payload or len(payload) < 14:
                 continue
+
+            # 🚀 性能优化：快速字节级过滤，避免频繁构造dpkt对象
+            # 检查EtherType (offset 12-13): LLDP=0x88cc, CDP=0x2000
+            ethertype = payload[12:14]
+            if ethertype not in (b'\x88\xcc', b'\x20\x00'):
+                # 检查CDP目的MAC (offset 0-5): 01:00:0c:cc:cc:cc
+                if payload[0:6] != b'\x01\x00\x0c\xcc\xcc\xcc':
+                    continue  # 非目标流量，快速跳过
 
             try:
                 eth = dpkt.ethernet.Ethernet(payload)
@@ -143,9 +151,15 @@ class AFPacketBackend(BaseBackend):
         self.sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0003))
         try:
             self.sock.bind((self.interface, 0))
-        except Exception:
+        except PermissionError:
+            # 🔧 友好化异常消息：提供解决方案
+            raise PermissionError(
+                "Permission denied: AF_PACKET requires raw socket privileges. "
+                "Run as root OR use: sudo setcap cap_net_raw+ep $(which python)"
+            )
+        except Exception as e:
             log.exception("Failed to bind AF_PACKET socket to interface %s", self.interface)
-            raise
+            raise RuntimeError(f"Failed to bind AF_PACKET socket to {self.interface}: {e}")
         self.sock.settimeout(self.timeout)
 
     def loop(self, on_packet: Callable, timeout: Optional[int] = None) -> None:
@@ -161,6 +175,17 @@ class AFPacketBackend(BaseBackend):
             except Exception:
                 log.exception("AF_PACKET recvfrom failed")
                 continue
+
+            if len(pkt) < 14:
+                continue
+
+            # 🚀 性能优化：快速字节级过滤，避免频繁构造dpkt对象
+            # 检查EtherType (offset 12-13): LLDP=0x88cc, CDP=0x2000
+            ethertype = pkt[12:14]
+            if ethertype not in (b'\x88\xcc', b'\x20\x00'):
+                # 检查CDP目的MAC (offset 0-5): 01:00:0c:cc:cc:cc
+                if pkt[0:6] != b'\x01\x00\x0c\xcc\xcc\xcc':
+                    continue  # 非目标流量，快速跳过
 
             try:
                 eth = dpkt.ethernet.Ethernet(pkt)
@@ -192,6 +217,7 @@ def choose_backend(interface: str) -> Optional[BaseBackend]:
     # Prefer pcapy if available
     if HAS_PCAPY and HAS_DPKT:
         try:
+            log.info("🔧 Backend selection: PCAPBackend (pcapy-ng available)")
             return PCAPBackend(interface)
         except Exception:
             log.exception("Failed to initialize PCAPBackend")
@@ -199,8 +225,12 @@ def choose_backend(interface: str) -> Optional[BaseBackend]:
     # Fallback to AF_PACKET on Linux
     if platform.system().lower() == "linux" and HAS_DPKT:
         try:
+            log.info("🔧 Backend selection: AFPacketBackend (Linux, pcapy unavailable)")
             return AFPacketBackend(interface)
         except Exception:
             log.exception("Failed to initialize AFPacketBackend")
+
+    # No lightweight backend available
+    log.warning("⚠️  No lightweight backend available (pcapy/AF_PACKET), will use Scapy fallback")
 
     return None
