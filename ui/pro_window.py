@@ -1801,39 +1801,43 @@ def main():
         # PyQt6的高DPI支持是自动启用的，无需手动设置
         app.setStyle("Fusion")
 
-        #  设置应用程序图标（任务栏和窗口标题栏）
+        # 在PyQt6中，High DPI支持默认启用，但我们可以设置一些属性
+        from PyQt6.QtWidgets import QApplication
+        from PyQt6.QtCore import Qt
         from PyQt6.QtGui import QIcon
 
-        # 查找图标文件 - 使用pathlib.Path（优化C）
-        meipass = getattr(sys, '_MEIPASS', '')
-        current_dir = Path(__file__).parent.parent
+        app = QApplication(sys.argv)
 
-        icon_paths = [
-            # 开发环境：使用相对路径
-            current_dir / 'lldp_icon.png',
-            current_dir / 'lldp_icon.ico',
-            # 打包后：在sys._MEIPASS中查找
-            Path(meipass) / 'lldp_icon.png',
-            Path(meipass) / 'lldp_icon.ico',
-            # 当前目录
-            Path('lldp_icon.png'),
-            Path('lldp_icon.ico'),
-        ]
+        # 🔥 关键修复：确保图标文件在打包后也能被找到
+        from pathlib import Path
+
+        # 获取基础路径（开发环境或打包环境）
+        if getattr(sys, 'frozen', False):
+            # PyInstaller打包后的环境
+            base_path = Path(sys._MEIPASS)
+        else:
+            # 开发环境
+            base_path = Path(__file__).parent.parent
+
+        # 优先使用.ico格式（Windows），其次.png
+        icon_filenames = ['lldp_icon.ico', 'lldp_icon.png']
 
         icon_loaded = False
-        for icon_path in icon_paths:
+        for icon_filename in icon_filenames:
+            icon_path = base_path / icon_filename
             if icon_path.exists():
                 try:
-                    app_icon = QIcon(str(icon_path))  # QIcon需要字符串路径
+                    app_icon = QIcon(str(icon_path))
                     app.setWindowIcon(app_icon)
+                    print(f"[DEBUG] ✅ Icon loaded: {icon_path}")
                     icon_loaded = True
                     break
                 except Exception as e:
+                    print(f"[WARNING] Failed to load icon {icon_path}: {e}")
                     continue
 
         if not icon_loaded:
-            # 如果图标文件不存在，使用默认图标
-            pass
+            print("[WARNING] No icon file found, using default icon")
 
         #  添加全局异常处理器，防止程序静默崩溃
         def handle_exception(exc_type, exc_value, exc_traceback):

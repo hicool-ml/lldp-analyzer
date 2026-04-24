@@ -1,0 +1,23 @@
+{
+  "test_info": {
+    "timestamp": "2026-04-24T08:54:24.283746",
+    "test_type": "automated",
+    "version": "Copilot feat/dpkt-pcap-backend",
+    "interface": "以太网",
+    "duration": 30
+  },
+  "results": {
+    "devices_discovered": 1,
+    "success": true
+  },
+  "devices": [
+    {
+      "display_name": "Ruijie",
+      "protocol": "CDP",
+      "chassis_id": "c0:b8:e6:3e:3b:fc",
+      "port_id": "c0:b8:e6:3e:3b:fc",
+      "system_name": "Ruijie",
+      "management_address": null
+    }
+  ]
+}
