@@ -247,9 +247,21 @@ class LLDPProfessionalWindow(QWidget):
         # Connect DEBUG log signal
         self.debug_log.connect(self._on_debug_log_ui)
 
-        # Auto-detect interfaces
+        # 🔧 修复：延迟网络接口扫描，避免阻塞窗口显示
+        # 窗口完全显示后再进行网络扫描
+        from PyQt6.QtCore import QTimer
+        self.log("准备延迟网络接口扫描...", "DEBUG")
+        self._delayed_scan_timer = QTimer.singleShot(100, self._delayed_interface_scan)
 
-        # Auto-detect interfaces
+        # Connect signals to slots for thread-safe UI updates
+        # CRITICAL: Use QueuedConnection to ensure slots run in main thread, not capture thread
+        self.log("连接基础信号槽...", "DEBUG")
+        self.device_discovered.connect(self._on_device_discovered_ui, Qt.ConnectionType.QueuedConnection)
+        self.capture_complete.connect(self._on_capture_complete_ui, Qt.ConnectionType.QueuedConnection)
+        self.log("基础信号槽连接完成", "DEBUG")
+
+    def _delayed_interface_scan(self):
+        """延迟的网络接口扫描 - 避免阻塞窗口显示"""
         self.log("开始自动检测网络接口...", "DEBUG")
         try:
             self.refresh_interfaces()
@@ -258,13 +270,6 @@ class LLDPProfessionalWindow(QWidget):
             self.log(f"网络接口检测失败: {e}", "ERROR")
             import traceback
             traceback.print_exc()
-
-        # Connect signals to slots for thread-safe UI updates
-        # CRITICAL: Use QueuedConnection to ensure slots run in main thread, not capture thread
-        self.log("连接基础信号槽...", "DEBUG")
-        self.device_discovered.connect(self._on_device_discovered_ui, Qt.ConnectionType.QueuedConnection)
-        self.capture_complete.connect(self._on_capture_complete_ui, Qt.ConnectionType.QueuedConnection)
-        self.log("基础信号槽连接完成", "DEBUG")
 
     def _set_window_icon(self):
         """
@@ -1881,6 +1886,11 @@ def main():
         print("[DEBUG] Window created successfully")
         print("[DEBUG] Showing window...")
         window.show()
+        print("[DEBUG] Raising window to front...")
+        window.raise_()           # 🔥 提升到最前面
+        window.activateWindow()   # 🔥 激活窗口
+        print("[DEBUG] Processing events to ensure window is visible...")
+        QApplication.processEvents()  # 🔥 确保窗口立即显示
         print("[DEBUG] Window shown, starting event loop...")
 
         sys.exit(app.exec())
