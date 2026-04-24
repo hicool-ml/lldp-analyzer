@@ -133,6 +133,8 @@ class CDPParser:
 
             if device.is_valid():
                 print(f"[DEBUG] Valid CDP device parsed: {device.get_display_name()}")
+                # 🔥 关键修复：设置协议标识，确保正确识别
+                device.protocol = "CDP"
                 return device
             else:
                 print(f"[DEBUG] CDP device is not valid")

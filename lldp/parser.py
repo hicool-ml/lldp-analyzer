@@ -253,6 +253,9 @@ class LLDPParser:
             # 🔧 修复：在所有TLV解析完成后，重新关联VLAN名称
             self._associate_vlan_names(device)
 
+            # 🔥 关键修复：设置协议标识，避免被误识别为CDP
+            device.protocol = "LLDP"
+
             return device if device.is_valid() else None
 
         except Exception as e:

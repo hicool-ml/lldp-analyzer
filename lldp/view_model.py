@@ -291,22 +291,22 @@ def to_view(device) -> DeviceView:
     port_role_badge = _get_port_role_badge(port_intent)
     port_role_summary = _format_intent_summary(port_intent)
 
-    # 🔥 架构优化：协议差异化处理全部在这里，UI层无需判断
-    if is_cdp:
-        # CDP协议的特殊处理
-        system_name = safe_get(device, 'device_id', '未知设备')
-        device_model = safe_get(device, 'platform', '未提供')
-        serial_number = '未提供'  # CDP通常不提供序列号
-        mac = 'N/A (CDP协议)'
-        id_type = 'CDP'
-        ip = '未提供'
-        software_version = safe_get(device, 'software_version', '未提供')
-        lldp_med = 'N/A (CDP协议)'
-        port_id = safe_get(device, 'port_id', '未提供')
-        port_type = 'CDP端口标识'
-        port_desc = '未提供'
-    else:
-        # LLDP协议的标准处理
+    # 🔥 修复：删除重复的CDP处理逻辑，使用后面统一的处理逻辑
+    # 初始化默认值，后面会根据协议类型覆盖
+    system_name = '未知设备'
+    device_model = '未提供'
+    serial_number = '未提供'
+    mac = '未提供'
+    id_type = '未知'
+    ip = '未提供'
+    software_version = '未提供'
+    lldp_med = '未提供'
+    port_id = '未提供'
+    port_type = '未知'
+    port_desc = '未知'
+
+    # LLDP协议的初步处理（后面会被CDP逻辑覆盖如果是CDP）
+    if not is_cdp:
         system_name = device.system_name or '未知设备'
         device_model = safe_get(device, 'device_model') or safe_get(device, 'product_model', '未提供')
 
@@ -334,7 +334,11 @@ def to_view(device) -> DeviceView:
 
         # 端口信息处理
         port_id_obj = safe_get(device, 'port_id')
-        port_id = safe_get(port_id_obj, 'value') if port_id_obj else '未提供'
+        # 🔥 修复：确保 port_id 是字符串，而不是 LLDPPortID 对象
+        if port_id_obj and hasattr(port_id_obj, 'value'):
+            port_id = str(port_id_obj.value) if port_id_obj.value else '未提供'
+        else:
+            port_id = '未提供'
         port_type = safe_get(port_id_obj, 'type', '未知').name if port_id_obj else '未知'
         port_desc = safe_get(device, 'port_description', '未知')
 
@@ -371,7 +375,11 @@ def to_view(device) -> DeviceView:
     else:
         # LLDP
         chassis_id = safe_get(device, 'chassis_id')
-        mac = safe_get(chassis_id, 'value') if chassis_id else "未提供"
+        # 🔥 修复：确保 mac 是字符串，而不是 LLDPChassisID 对象
+        if chassis_id and hasattr(chassis_id, 'value'):
+            mac = str(chassis_id.value) if chassis_id.value else "未提供"
+        else:
+            mac = "未提供"
         id_type = safe_get(chassis_id, 'type', '未知').name if chassis_id else "未知"
         system_name = safe_get(device, 'system_name') or "未知设备"
 
@@ -404,13 +412,23 @@ def to_view(device) -> DeviceView:
 
     # Port Info
     if is_cdp:
-        port_id = safe_get(device, 'port_id') or "未提供"
+        # 🔥 修复：确保 CDP port_id 是字符串
+        port_id_raw = safe_get(device, 'port_id')
+        if port_id_raw:
+            # CDP port_id 应该是字符串，但防止意外情况
+            port_id = str(port_id_raw) if not isinstance(port_id_raw, str) else port_id_raw
+        else:
+            port_id = "未提供"
         port_type = "CDP端口标识"
         port_desc = "未提供"
     else:
         port_id_obj = safe_get(device, 'port_id')
-        port_id = safe_get(port_id_obj, 'value') if port_id_obj else "未提供"
-        port_type = safe_get(port_id_obj, 'type', '未知').name if port_id_obj else "未知"
+        # 🔥 修复：确保 port_id 是字符串，而不是 LLDPPortID 对象
+        if port_id_obj and hasattr(port_id_obj, 'value'):
+            port_id = str(port_id_obj.value) if port_id_obj.value else '未提供'
+        else:
+            port_id = '未提供'
+        port_type = safe_get(port_id_obj, 'type', '未知').name if port_id_obj else '未知'
         port_desc = safe_get(device, 'port_description') or "未知"
 
     # VLAN

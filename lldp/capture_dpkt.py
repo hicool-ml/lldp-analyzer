@@ -181,7 +181,14 @@ class HybridCapture:
 
                 if device and device.is_valid():
                     device.capture_interface = str(interface)
-                    device.protocol = 'LLDP' if hasattr(device, 'protocol') and device.protocol == 'LLDP' else 'CDP'
+                    # 🔥 修复：使用解析器设置的协议，不要覆盖
+                    # 如果解析器已经设置了protocol，使用它；否则基于设备类型推断
+                    if hasattr(device, 'protocol') and device.protocol:
+                        # 使用解析器设置的协议标识
+                        pass  # 保持原有的protocol设置
+                    else:
+                        # 根据设备类型推断协议
+                        device.protocol = 'LLDP' if hasattr(device, 'chassis_id') else 'CDP'
                     res = CaptureResult(device=device, timestamp=time.time(), interface=str(interface))
                     self.device_queue.append(res)
                     if callback:

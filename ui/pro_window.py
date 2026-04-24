@@ -1230,6 +1230,13 @@ class LLDPProfessionalWindow(QWidget):
             self.device_count_label.setText(f"已发现: {count} 台设备")
             self.log(f"设备已发现: {device.get_display_name()}", "SUCCESS")
 
+            # 🔥 关键UX改进：捕获成功后立即停止，不让用户干等
+            if self.is_capturing:
+                self.log(f"✅ 设备发现成功，立即停止捕获", "INFO")
+                self.status_label.setText(f"✅ 设备已发现: {device.get_display_name()} - 捕获完成")
+                self.progress_bar.setValue(100)  # 进度条设置为100%
+                self.stop_capture()
+
             #  恢复DEBUG日志处理
             if self.debug_log_timer and self.debug_enabled:
                 self.debug_log_timer.start(100)  # 改为100ms，降低优先级
@@ -1395,6 +1402,14 @@ class LLDPProfessionalWindow(QWidget):
                 # 修正：捕获时长是60秒（支持LLDP/CDP），不是30秒
                 progress = min(int((elapsed / 60) * 100), 100)
                 self.progress_bar.setValue(progress)
+
+                # 🔥 关键修复：检查超时并自动停止捕获
+                if elapsed >= 60:
+                    self.status_label.setText("捕获超时，自动停止...")
+                    self.log("捕获达到60秒超时，自动停止", "INFO")
+                    # 自动停止捕获
+                    self.stop_capture()
+                    return
 
                 # 简单的剩余时间显示
                 remaining = max(0, 60 - elapsed)
