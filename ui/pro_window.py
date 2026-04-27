@@ -44,13 +44,13 @@ class SafeWriter:
 # Redirect stdout to safe writer (handles None case for console=False)
 sys.stdout = SafeWriter(getattr(sys, 'stdout', None))
 sys.stderr = SafeWriter(getattr(sys, 'stderr', None))
-from PyQt6.QtWidgets import (
-    QApplication, QWidget, QLabel, QVBoxLayout,
-    QHBoxLayout, QGroupBox, QPushButton, QComboBox,
-    QProgressBar, QMessageBox, QTextEdit, QPlainTextEdit
-)
+
+# 🔧 修复：只导入必要的Qt基类（QWidget等），避免导入QIcon/QPixmap
+# 这些基类用于类型注解和类继承，不会创建Qt对象
+from PyQt6.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton, QComboBox, QProgressBar, QMessageBox, QTextEdit, QPlainTextEdit
 from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
 from PyQt6.QtGui import QFont, QPalette, QTextCharFormat, QColor
+# 注意：QIcon将在需要时（main函数中）单独导入，避免QPixmap错误
 
 # Import from clean architecture
 from lldp import LLDPCaptureListener
@@ -221,8 +221,8 @@ class LLDPProfessionalWindow(QWidget):
         self.setMinimumSize(800, 600)
         self.setStyleSheet("background-color:#0f172a; font-family:'Segoe UI Variable','Microsoft YaHei UI';")
 
-        #  设置窗口图标
-        self._set_window_icon()
+        # 🔧 修复：不在__init__中设置图标，避免QPixmap在QApplication之前使用
+        # 图标设置将在main()函数中的QApplication创建后进行
 
         # Core components (clean architecture)
         self.listener = None
@@ -1790,21 +1790,28 @@ def main():
             except Exception as e:
                 print(f"[WARNING] Failed to set Windows AppUserModelID: {e}")
 
-        # 在PyQt6中，High DPI支持默认启用，但我们可以设置一些属性
+        # 🔧 修复：先创建QApplication，再导入其他Qt模块（避免QPixmap错误）
+        print("[DEBUG] Creating QApplication...")
         from PyQt6.QtWidgets import QApplication
-        from PyQt6.QtCore import Qt
-
         app = QApplication(sys.argv)
+        print("[DEBUG] QApplication created successfully")
+
+        # 🔥 Windows任务栏图标修复：设置应用程序名称
+        app.setApplicationName("LLDP Analyzer")
+        app.setApplicationDisplayName("LLDP Network Analyzer")
+        app.setOrganizationName("HiCool")
+        app.setOrganizationDomain("hicool.com")
+        print("[DEBUG] Application metadata set")
+
+        # 现在可以安全地导入其他Qt模块
+        print("[DEBUG] Importing Qt modules...")
+        from PyQt6.QtWidgets import QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton, QComboBox, QProgressBar, QMessageBox, QTextEdit, QPlainTextEdit
+        from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal
+        from PyQt6.QtGui import QFont, QPalette, QTextCharFormat, QColor, QIcon
+        print("[DEBUG] Qt modules imported successfully")
 
         # PyQt6的高DPI支持是自动启用的，无需手动设置
         app.setStyle("Fusion")
-
-        # 在PyQt6中，High DPI支持默认启用，但我们可以设置一些属性
-        from PyQt6.QtWidgets import QApplication
-        from PyQt6.QtCore import Qt
-        from PyQt6.QtGui import QIcon
-
-        app = QApplication(sys.argv)
 
         # 🔥 关键修复：确保图标文件在打包后也能被找到
         from pathlib import Path
@@ -1877,8 +1884,37 @@ def main():
         print("[DEBUG] Creating LLDP Professional Window...")
         window = LLDPProfessionalWindow()
         print("[DEBUG] Window created successfully")
+
+        # 🔥 关键：设置窗口图标（Windows任务栏需要）
+        if icon_loaded:
+            window.setWindowIcon(app_icon)
+            print("[DEBUG] ✅ Window icon set")
+
+        # 🔥 Windows任务栏图标额外修复：强制设置窗口属性
+        if os.name == 'nt':
+            try:
+                # 确保窗口有唯一的窗口类名
+                window.setObjectName("LLDPAnalyzerWindow")
+                # 强制刷新窗口属性
+                window.setProperty("_q_AppUserModelId", app_id)
+                print("[DEBUG] ✅ Windows window properties set")
+            except Exception as e:
+                print(f"[WARNING] Failed to set window properties: {e}")
+
         print("[DEBUG] Showing window...")
         window.show()
+        window.raise_()  # 提升窗口到前台
+        window.activateWindow()  # 激活窗口
+
+        # 🔥 关键：确保窗口在任务栏中显示
+        if os.name == 'nt':
+            try:
+                # 强制Windows更新任务栏
+                window.setWindowFlag(Qt.WindowType.WindowHint, True)
+                print("[DEBUG] ✅ Windows taskbar hint set")
+            except Exception as e:
+                print(f"[WARNING] Failed to set taskbar hint: {e}")
+
         print("[DEBUG] Window shown, starting event loop...")
 
         sys.exit(app.exec())
