@@ -1,10 +1,12 @@
 """
-Hybrid LLDP/CDP Capture using dpkt + selectable backends (pcapy / AF_PACKET)
+Hybrid LLDP/CDP Capture using dpkt + selectable backends (pcapy / AF_PACKET / Raw Socket)
 
-This module provides a capture engine that prefer lightweight backends
-(pcappy-ng or AF_PACKET) and falls back to Scapy only if neither backend
-is available. It keeps the public API compatible with previous LLDPCapture
-so the UI code does not need to change.
+This module provides a capture engine that prefer lightweight backends:
+1. 🚀 Raw Socket Engine (Linux AF_PACKET, Windows/macOS pcapy-ng) - ZERO Scapy dependency
+2. ⚡ Lightweight backends (pcapy-ng or AF_PACKET) with dpkt parsing
+3. 🔄 Fallback to Scapy only if no other backend is available
+
+Public API remains compatible with previous LLDPCapture, so UI code does not need to change.
 """
 import logging
 import queue
@@ -39,6 +41,14 @@ except Exception:
 from .parser import LLDPParser
 from .cdp.parser import CDPParser
 from .capture_backends import choose_backend, BaseBackend
+
+# 🔥 新增：无Scapy的Raw Socket引擎
+try:
+    from .raw_socket_capture import create_capture_engine
+    HAS_RAW_SOCKET = True
+except Exception:
+    HAS_RAW_SOCKET = False
+    log.debug("Raw socket engine not available (will use Scapy fallback)")
 
 
 class CaptureResult:
@@ -86,6 +96,40 @@ class HybridCapture:
         except Exception:
             log.exception("Device callback raised exception")
 
+    def _raw_socket_callback(self, raw_data: bytes):
+        """
+        Raw Socket引擎的回调处理
+        使用dpkt解析原始数据包
+        """
+        try:
+            if not HAS_DPKT:
+                log.warning("dpkt未安装，无法解析Raw Socket数据包")
+                return
+
+            # 使用dpkt解析以太网帧
+            eth = dpkt.ethernet.Ethernet(raw_data)
+            self._handle_dpkt_eth(eth)
+
+        except Exception as e:
+            log.exception(f"Raw Socket回调处理失败: {e}")
+
+    def _raw_socket_timeout_worker(self, duration: int):
+        """
+        Raw Socket引擎的超时工作线程
+        在指定时间后停止捕获
+        """
+        try:
+            # 等待指定时长
+            time.sleep(duration)
+
+            # 停止捕获
+            if self.is_capturing:
+                log.info(f"Raw Socket捕获超时 ({duration}秒)，停止捕获")
+                self.stop_capture()
+
+        except Exception as e:
+            log.exception(f"Raw Socket超时工作线程异常: {e}")
+
     def start_capture(self, interface, duration: int = 60, callback: Optional[Callable] = None):
         if self.is_capturing:
             raise RuntimeError("Capture already in progress")
@@ -94,39 +138,70 @@ class HybridCapture:
         for key in self.metrics:
             self.metrics[key] = 0
 
-        # choose backend
+        self._current_callback = callback
+
+        # 🚀 第一优先级：无Scapy的Raw Socket引擎
+        if HAS_RAW_SOCKET:
+            try:
+                log.info(f"🚀 使用Raw Socket引擎 (零Scapy依赖): {interface}")
+                self.is_capturing = True
+
+                # 创建Raw Socket引擎
+                self.raw_socket_engine = create_capture_engine(
+                    interface,
+                    self._raw_socket_callback,
+                    promisc=True
+                )
+
+                # 启动捕获
+                self.raw_socket_engine.start_capture()
+
+                # 启动超时线程
+                self.capture_thread = threading.Thread(
+                    target=self._raw_socket_timeout_worker,
+                    args=(duration,),
+                    daemon=True
+                )
+                self.capture_thread.start()
+
+                return
+            except Exception as e:
+                log.warning(f"Raw Socket引擎启动失败: {e}")
+                self.is_capturing = False
+
+        # ⚡ 第二优先级：现有的lightweight backend (pcapy/AF_PACKET + dpkt)
         backend = choose_backend(interface)
-        if backend is None:
-            # fallback to scapy if available
-            if not HAS_SCAPY:
-                raise RuntimeError("No capture backend available. Install pcapy (pcapy-ng) or run on Linux with dpkt installed or install Scapy.")
-            log.info("No lightweight backend available; falling back to Scapy")
-            # use old scapy-based flow in a separate thread (simpler to reuse existing logic)
-            self._current_callback = callback
+        if backend is not None:
+            try:
+                self.backend = backend
+                self.backend.open(bpf_filter="ether proto 0x88cc or ether host 01:00:0c:cc:cc:cc")
+                log.info(f"⚡ 使用Lightweight Backend (dpkt + pcapy/AF_PACKET): {interface}")
+
+                self.is_capturing = True
+                self.capture_thread = threading.Thread(target=self._backend_worker, args=(duration,), daemon=True)
+                self.capture_thread.start()
+                return
+            except Exception as e:
+                log.warning(f"Lightweight backend启动失败: {e}")
+                self.backend = None
+
+        # 🔄 最后的fallback：Scapy
+        if HAS_SCAPY:
+            log.info(f"🔄 使用Scapy fallback (仅用于兼容): {interface}")
             self.is_capturing = True
             self.capture_thread = threading.Thread(target=self._scapy_worker, args=(interface, duration, callback), daemon=True)
             self.capture_thread.start()
             return
 
-        self.backend = backend
-        try:
-            self.backend.open(bpf_filter="ether proto 0x88cc or ether host 01:00:0c:cc:cc:cc")
-        except Exception:
-            log.exception("Backend failed to open; falling back to Scapy if available")
-            if HAS_SCAPY:
-                self.backend = None
-                self._current_callback = callback
-                self.is_capturing = True
-                self.capture_thread = threading.Thread(target=self._scapy_worker, args=(interface, duration, callback), daemon=True)
-                self.capture_thread.start()
-                return
-            raise
-
-        self._current_callback = callback
-        self.is_capturing = True
-        # start worker thread that drives backend.loop
-        self.capture_thread = threading.Thread(target=self._backend_worker, args=(duration,), daemon=True)
-        self.capture_thread.start()
+        # 所有引擎都失败
+        raise RuntimeError(
+            "❌ 无可用的捕获引擎！\n"
+            "请安装以下依赖之一：\n"
+            "1. Linux: 无需额外依赖 (使用原生AF_PACKET)\n"
+            "2. Windows: pip install pcapy-ng (需要安装Npcap驱动)\n"
+            "3. macOS: pip install pcapy-ng\n"
+            "4. 通用: pip install scapy (不推荐，仅作为fallback)"
+        )
 
     def _handle_dpkt_eth(self, eth):
         """Common handler for dpkt.ethernet.Ethernet frames"""
@@ -232,7 +307,18 @@ class HybridCapture:
         self.is_capturing = False
 
     def stop_capture(self):
+        """停止捕获并强制刷新缓存中的设备"""
         self.is_capturing = False
+
+        # 🚀 停止Raw Socket引擎（如果使用）
+        if hasattr(self, 'raw_socket_engine') and self.raw_socket_engine:
+            try:
+                log.info("🛑 停止Raw Socket引擎")
+                self.raw_socket_engine.stop_capture()
+            except Exception as e:
+                log.exception(f"停止Raw Socket引擎失败: {e}")
+            finally:
+                self.raw_socket_engine = None
 
         # 🔧 资源泄露防护：确保backend.close()在所有路径被调用
         try:
@@ -245,10 +331,13 @@ class HybridCapture:
             # 清理backend引用，防止重复调用
             self.backend = None
 
-        # flush queue and submit callbacks for queued devices (thread-safe)
-        if self._current_callback:
-            flushed = self.get_discovered_devices()
-            for res in flushed:
+        # 🔥 关键新增：停止时强制刷新缓存，确保最后的设备能显示
+        log.info("🔥 强制刷新设备缓存...")
+        flushed_devices = self.get_discovered_devices()
+
+        if self._current_callback and flushed_devices:
+            log.info(f"📤 触发 {len(flushed_devices)} 个缓存设备的回调")
+            for res in flushed_devices:
                 try:
                     if hasattr(self._callback_pool, 'submit'):
                         self._callback_pool.submit(self._safe_callback, self._current_callback, res.device)
@@ -257,8 +346,8 @@ class HybridCapture:
                 except Exception:
                     log.exception("Failed to submit flush callback")
 
-            # 🔧 防止重复提交：清理callback引用
-            self._current_callback = None
+        # 🔧 防止重复提交：清理callback引用
+        self._current_callback = None
 
         # 📊 打印运行指标
         log.info("📊 Capture metrics: rx_packets=%d, parsed=%d, parse_errors=%d, callbacks=%d, filtered=%d",

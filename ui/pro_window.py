@@ -132,13 +132,21 @@ class LLDPProfessionalWindow(QWidget):
         finished = pyqtSignal(list)  # 信号：扫描完成，返回有效接口列表
 
         def run(self):
-            """执行网卡扫描 - 在后台线程中运行"""
+            """执行网卡扫描 - 在后台线程中运行（使用无Scapy引擎）"""
             try:
-                from scapy.all import get_working_ifaces
+                # 🚀 第一优先级：使用无Scapy的网卡扫描引擎
+                try:
+                    from lldp.interface_scanner import get_working_interfaces
+                    print(f"[DEBUG] 🚀 使用无Scapy网卡扫描引擎", flush=True)
+                    all_interfaces = get_working_interfaces()
+                except Exception as e:
+                    print(f"[DEBUG] 无Scapy引擎失败: {e}，使用Scapy fallback", flush=True)
+                    # 🔄 Fallback：使用Scapy
+                    from scapy.all import get_working_ifaces
+                    all_interfaces = list(get_working_ifaces())
 
                 print(f"[DEBUG] ===== Async Interface Scanning Started =====", flush=True)
 
-                all_interfaces = list(get_working_ifaces())
                 valid_interfaces = []
 
                 for iface in all_interfaces:
