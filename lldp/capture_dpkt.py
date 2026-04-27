@@ -2,9 +2,9 @@
 Hybrid LLDP/CDP Capture using dpkt + selectable backends (pcapy / AF_PACKET / Raw Socket)
 
 This module provides a capture engine that prefer lightweight backends:
-1. 🚀 Raw Socket Engine (Linux AF_PACKET, Windows/macOS pcapy-ng) - ZERO Scapy dependency
-2. ⚡ Lightweight backends (pcapy-ng or AF_PACKET) with dpkt parsing
-3. 🔄 Fallback to Scapy only if no other backend is available
+1.  Raw Socket Engine (Linux AF_PACKET, Windows/macOS pcapy-ng) - ZERO Scapy dependency
+2.  Lightweight backends (pcapy-ng or AF_PACKET) with dpkt parsing
+3.  Fallback to Scapy only if no other backend is available
 
 Public API remains compatible with previous LLDPCapture, so UI code does not need to change.
 """
@@ -42,7 +42,7 @@ from .parser import LLDPParser
 from .cdp.parser import CDPParser
 from .capture_backends import choose_backend, BaseBackend
 
-# 🔥 新增：无Scapy的Raw Socket引擎
+#  新增：无Scapy的Raw Socket引擎
 try:
     from .raw_socket_capture import create_capture_engine
     HAS_RAW_SOCKET = True
@@ -73,7 +73,7 @@ class HybridCapture:
         self.backend: Optional[BaseBackend] = None
         self._current_callback: Optional[Callable] = None
 
-        # 📊 运行指标（可观测性）
+        #  运行指标（可观测性）
         self.metrics = {
             "rx_packets": 0,        # 接收的总包数
             "parsed": 0,            # 成功解析的设备数
@@ -140,10 +140,14 @@ class HybridCapture:
 
         self._current_callback = callback
 
-        # 🚀 第一优先级：无Scapy的Raw Socket引擎
+        # 使用log.warning确保UI能够捕获并显示
+        log.warning("[CAPTURE] Engine selection started...")
+        log.warning(f"[CAPTURE] Raw Socket: {HAS_RAW_SOCKET}, Scapy: {HAS_SCAPY}")
+
+        #  第一优先级：无Scapy的Raw Socket引擎
         if HAS_RAW_SOCKET:
             try:
-                log.info(f"🚀 使用Raw Socket引擎 (零Scapy依赖): {interface}")
+                log.warning("[CAPTURE] [1/3] Trying Raw Socket engine...")
                 self.is_capturing = True
 
                 # 创建Raw Socket引擎
@@ -164,44 +168,68 @@ class HybridCapture:
                 )
                 self.capture_thread.start()
 
+                log.warning("[CAPTURE] Raw Socket engine started successfully")
                 return
             except Exception as e:
-                log.warning(f"Raw Socket引擎启动失败: {e}")
+                log.warning(f"[CAPTURE] Raw Socket engine failed: {e}")
+                log.warning("[CAPTURE] Will try Lightweight Backend...")
                 self.is_capturing = False
 
-        # ⚡ 第二优先级：现有的lightweight backend (pcapy/AF_PACKET + dpkt)
+        #  第二优先级：现有的lightweight backend (pcapy/AF_PACKET + dpkt)
+        log.warning("[CAPTURE] [2/3] Trying Lightweight Backend...")
         backend = choose_backend(interface)
         if backend is not None:
             try:
+                log.warning(f"[CAPTURE] Backend created: {backend.__class__.__name__}")
                 self.backend = backend
                 self.backend.open(bpf_filter="ether proto 0x88cc or ether host 01:00:0c:cc:cc:cc")
-                log.info(f"⚡ 使用Lightweight Backend (dpkt + pcapy/AF_PACKET): {interface}")
+                log.warning(f"[CAPTURE] Using Lightweight Backend: {interface}")
 
                 self.is_capturing = True
                 self.capture_thread = threading.Thread(target=self._backend_worker, args=(duration,), daemon=True)
                 self.capture_thread.start()
+                log.warning("[CAPTURE] Lightweight Backend started successfully")
                 return
             except Exception as e:
-                log.warning(f"Lightweight backend启动失败: {e}")
+                log.warning(f"[CAPTURE] Lightweight backend failed: {e}")
+                log.warning("[CAPTURE] Will try Scapy fallback...")
                 self.backend = None
 
-        # 🔄 最后的fallback：Scapy
+        #  最后的fallback：Scapy
         if HAS_SCAPY:
-            log.info(f"🔄 使用Scapy fallback (仅用于兼容): {interface}")
+            log.warning(f"[CAPTURE] [3/3] Using Scapy Fallback: {interface}")
+            log.warning("[CAPTURE] Scapy mode has lower performance, Npcap recommended")
+            log.warning("[CAPTURE] Starting Scapy worker thread...")
             self.is_capturing = True
             self.capture_thread = threading.Thread(target=self._scapy_worker, args=(interface, duration, callback), daemon=True)
             self.capture_thread.start()
+            log.warning("[CAPTURE] Scapy worker thread started")
             return
 
         # 所有引擎都失败
-        raise RuntimeError(
-            "❌ 无可用的捕获引擎！\n"
-            "请安装以下依赖之一：\n"
-            "1. Linux: 无需额外依赖 (使用原生AF_PACKET)\n"
-            "2. Windows: pip install pcapy-ng (需要安装Npcap驱动)\n"
-            "3. macOS: pip install pcapy-ng\n"
-            "4. 通用: pip install scapy (不推荐，仅作为fallback)"
-        )
+        error_msg = """
+ 无法启动网络捕获！所有捕获引擎都不可用。
+
+当前状态:
+  - Raw Socket引擎: 失败 (缺少pcapy-ng或Npcap驱动)
+  - Lightweight Backend: 失败 (缺少pcapy-ng或Npcap驱动)
+  - Scapy Fallback: 失败 (Scapy未安装)
+
+解决方案:
+   推荐方案: 安装Npcap驱动 (性能最佳)
+     1. 下载Npcap: https://npcap.com/#download
+     2. 安装时勾选 "Install Npcap in Service Mode"
+     3. 安装后重新运行此程序
+
+   备用方案: 使用Scapy (已安装)
+     pip install scapy
+
+  📚 更多信息:
+     - Windows性能对比: Npcap (30K pps) vs Scapy (3K pps)
+     - Linux: 无需额外依赖，原生支持
+     - macOS: 安装pcapy-ng
+"""
+        raise RuntimeError(error_msg)
 
     def _handle_dpkt_eth(self, eth):
         """Common handler for dpkt.ethernet.Ethernet frames"""
@@ -269,19 +297,49 @@ class HybridCapture:
     def _scapy_worker(self, interface, duration: int, callback: Optional[Callable]):
         # minimal scapy fallback (keeps compatibility)
         from scapy.all import sniff, Ether
+        import sys
+
+        #  处理接口参数（可能是NetworkInterface对象或字符串）
+        if hasattr(interface, 'name'):
+            iface_name = interface.name
+            iface_desc = interface.description if hasattr(interface, 'description') else interface.name
+        else:
+            iface_name = str(interface)
+            iface_desc = str(interface)
+
+        log.warning(f"[SCAPY] Scapy mode starting: {iface_desc}")
+        log.warning(f"[SCAPY] Interface name: {iface_name}")
+        log.warning(f"[SCAPY] Duration: {duration} seconds")
+
+        #  数据包计数器（包括所有数据包，不只是LLDP/CDP）
+        total_packets = [0]  # 使用列表以便在闭包中修改
 
         def pkt_handler(pkt):
             try:
+                total_packets[0] += 1
+                self.metrics["rx_packets"] += 1
+
+                # 每100个包打印一次进度
+                if total_packets[0] % 100 == 0:
+                    log.warning(f"[SCAPY] Captured {total_packets[0]} packets so far...")
+
                 # reuse existing parser methods that accept scapy packets
                 device = None
                 if pkt.haslayer(Ether) and pkt[Ether].type == 0x88CC:
+                    log.warning(f"[SCAPY] Received LLDP packet #{self.metrics['rx_packets']}")
                     device = self.lldp_parser.parse_scapy_packet(pkt)
                 elif pkt.haslayer(Ether) and pkt[Ether].dst == "01:00:0c:cc:cc:cc":
+                    log.warning(f"[SCAPY] Received CDP packet #{self.metrics['rx_packets']}")
                     device = self.cdp_parser.parse_scapy_packet(pkt)
+                else:
+                    self.metrics["filtered"] += 1
+                    return
 
                 if device and device.is_valid():
-                    device.capture_interface = str(interface)
-                    # 🔥 修复：使用解析器设置的协议，不要覆盖
+                    self.metrics["parsed"] += 1
+                    log.warning(f"[SCAPY] Parsed successfully #{self.metrics['parsed']}: {device.system_name}")
+                    device.capture_interface = iface_desc
+                    #  修复：使用解析器设置的协议，不要覆盖
                     # 如果解析器已经设置了protocol，使用它；否则基于设备类型推断
                     if hasattr(device, 'protocol') and device.protocol:
                         # 使用解析器设置的协议标识
@@ -289,9 +347,10 @@ class HybridCapture:
                     else:
                         # 根据设备类型推断协议
                         device.protocol = 'LLDP' if hasattr(device, 'chassis_id') else 'CDP'
-                    res = CaptureResult(device=device, timestamp=time.time(), interface=str(interface))
+                    res = CaptureResult(device=device, timestamp=time.time(), interface=iface_desc)
                     self.device_queue.put(res)  # Thread-safe enqueue
                     if callback:
+                        self.metrics["callbacks"] += 1
                         if hasattr(self._callback_pool, 'submit'):
                             self._callback_pool.submit(self._safe_callback, callback, device)
                         else:
@@ -299,21 +358,66 @@ class HybridCapture:
                                 callback(device)
                             except Exception:
                                 log.exception("Callback raised")
+                else:
+                    self.metrics["parse_errors"] += 1
+                    log.warning(f"[SCAPY] Parse failed #{self.metrics['parse_errors']}")
             except Exception:
+                self.metrics["parse_errors"] += 1
                 log.exception("Error in scapy pkt_handler")
 
         # start sniffing
-        sniff(iface=interface, prn=pkt_handler, timeout=duration, store=False)
-        self.is_capturing = False
+        try:
+            log.warning(f"[SCAPY] Starting packet capture...")
+            sniff(iface=iface_name, prn=pkt_handler, timeout=duration, store=False)
+            log.warning(f"[SCAPY] Capture completed")
+            log.warning(f"[SCAPY] Stats: total={total_packets[0]}, LLDP/CDP={self.metrics['rx_packets']}, parsed={self.metrics['parsed']}")
+        except Exception as e:
+            error_str = str(e)
+            log.warning(f"[SCAPY] Capture failed: {e}")
+
+            # 特殊处理：winpcap/pcap驱动未安装
+            if "winpcap is not installed" in error_str.lower() or "pcap" in error_str.lower():
+                log.error("=" * 70)
+                log.error("CRITICAL ERROR: Network capture driver not installed!")
+                log.error("=" * 70)
+                log.error("")
+                log.error("LLDP/CDP packet capture requires a network capture driver.")
+                log.error("")
+                log.error("SOLUTION:")
+                log.error("  Install Npcap driver (FREE, 15MB)")
+                log.error("  1. Download: https://npcap.com/dist/npcap-1.87.exe")
+                log.error("  2. Run installer")
+                log.error("  3. CHECK 'Install Npcap in Service Mode'")
+                log.error("  4. CHECK 'Support Raw 802.11 Traffic' (optional)")
+                log.error("  5. Complete installation and restart this program")
+                log.error("")
+                log.error("ALTERNATIVE:")
+                log.error("  Visit https://npcap.com/#download to choose version")
+                log.error("")
+                log.error("WHY Npcap is required:")
+                log.error("  - LLDP/CDP are layer 2 protocols")
+                log.error("  - Scapy needs raw socket access (layer 2)")
+                log.error("  - Windows requires pcap driver for layer 2 access")
+                log.error("  - No pcap driver = NO packet capture")
+                log.error("=" * 70)
+            else:
+                log.warning(f"[SCAPY] Possible reasons:")
+                log.warning(f"[SCAPY]   1. Incorrect interface name")
+                log.warning(f"[SCAPY]   2. No admin rights")
+                log.warning(f"[SCAPY]   3. Interface not connected or enabled")
+                log.warning(f"[SCAPY]   4. Firewall blocking packet capture")
+                log.warning(f"[SCAPY]   5. No devices connected to this interface")
+        finally:
+            self.is_capturing = False
 
     def stop_capture(self):
         """停止捕获并强制刷新缓存中的设备"""
         self.is_capturing = False
 
-        # 🚀 停止Raw Socket引擎（如果使用）
+        #  停止Raw Socket引擎（如果使用）
         if hasattr(self, 'raw_socket_engine') and self.raw_socket_engine:
             try:
-                log.info("🛑 停止Raw Socket引擎")
+                log.info(" 停止Raw Socket引擎")
                 self.raw_socket_engine.stop_capture()
             except Exception as e:
                 log.exception(f"停止Raw Socket引擎失败: {e}")
@@ -331,35 +435,30 @@ class HybridCapture:
             # 清理backend引用，防止重复调用
             self.backend = None
 
-        # 🔥 关键新增：停止时强制刷新缓存，确保最后的设备能显示
-        log.info("🔥 强制刷新设备缓存...")
+        #  关键新增：停止时强制刷新缓存，确保最后的设备能显示
+        log.info(" 强制刷新设备缓存...")
         flushed_devices = self.get_discovered_devices()
 
-        if self._current_callback and flushed_devices:
-            log.info(f"📤 触发 {len(flushed_devices)} 个缓存设备的回调")
-            for res in flushed_devices:
-                try:
-                    if hasattr(self._callback_pool, 'submit'):
-                        self._callback_pool.submit(self._safe_callback, self._current_callback, res.device)
-                    else:
-                        self._safe_callback(self._current_callback, res.device)
-                except Exception:
-                    log.exception("Failed to submit flush callback")
+        # 🔥 修复假死：不直接调用回调，避免阻塞UI线程
+        # 设备已经在捕获过程中通过回调发送到UI了，这里不需要再次触发
+        if flushed_devices:
+            log.info(f"📊 缓存中有 {len(flushed_devices)} 个设备（已在捕获时发送到UI）")
+            # 不再调用callback，避免重复UI更新和线程阻塞
 
         # 🔧 防止重复提交：清理callback引用
         self._current_callback = None
 
-        # 📊 打印运行指标
-        log.info("📊 Capture metrics: rx_packets=%d, parsed=%d, parse_errors=%d, callbacks=%d, filtered=%d",
+        #  打印运行指标
+        log.info(" Capture metrics: rx_packets=%d, parsed=%d, parse_errors=%d, callbacks=%d, filtered=%d",
                  self.metrics["rx_packets"], self.metrics["parsed"],
                  self.metrics["parse_errors"], self.metrics["callbacks"],
                  self.metrics["filtered"])
 
-        # wait for thread to finish
+        # 🔥 修复假死问题：不阻塞等待线程结束，让线程自然退出
+        # 线程会在daemon=True时随主进程退出，或在自己的超时后退出
         if self.capture_thread and self.capture_thread.is_alive():
-            self.capture_thread.join(timeout=5)
-            if self.capture_thread.is_alive():
-                log.warning("Capture thread still alive after timeout")
+            log.warning("Capture thread is still running (will exit naturally)")
+            # 不调用join()，避免阻塞UI线程
 
     def shutdown(self):
         """Shutdown capture and release all resources."""
@@ -382,7 +481,7 @@ class HybridCapture:
     def get_discovered_devices(self) -> List[CaptureResult]:
         """Drain queue and return all discovered devices (thread-safe).
 
-        ⚠️  IMPORTANT: This call will clear the internal queue!
+          IMPORTANT: This call will clear the internal queue!
         All devices returned by this call are removed from the internal queue.
         Subsequent calls will only return newly discovered devices.
 

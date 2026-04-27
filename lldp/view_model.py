@@ -83,29 +83,29 @@ def format_vlan(device, intent_profile=None) -> str:
         if intent_profile.role in [PortRole.TRUNK_NATIVE, PortRole.TRUNK_NO_NATIVE]:
             # Trunk端口强调Tagged/Untagged语义
             if protocol_vlan:
-                return f"Trunk (Native + {protocol_vlan} Tagged)"
+                return f"Trunk +{protocol_vlan}"  # 缩短显示
             elif port_vlan:
-                return f"Trunk ({port_vlan.vlan_id} Native)"
+                return f"Trunk ({port_vlan.vlan_id})"  # 缩短显示
             else:
-                return "Trunk (无VLAN信息)"
+                return "Trunk"  # 最简短
 
         elif intent_profile.role in [PortRole.ACCESS_TERMINAL, PortRole.ACCESS_WIRELESS, PortRole.ACCESS_VOICE]:
             # Access端口强调Untagged语义
             if port_vlan:
                 tagged = safe_get(port_vlan, 'tagged')
-                tagged_text = "Tagged" if tagged else "Untagged"
-                return f"Access ({port_vlan.vlan_id} {tagged_text})"
+                tagged_text = "T" if tagged else "U"  # 缩短为T/U
+                return f"{port_vlan.vlan_id}({tagged_text})"  # 缩短显示
             else:
-                return "Access (未分配VLAN)"
+                return "Access"  # 最简短
 
         elif intent_profile.role in [PortRole.UPLINK_LAG, PortRole.UPLINK_SINGLE]:
             # Uplink强调路由VLAN
             if protocol_vlan:
-                return f"Uplink (Native + {protocol_vlan} Tagged)"
+                return f"Uplink +{protocol_vlan}"  # 缩短显示
             elif port_vlan:
-                return f"Uplink ({port_vlan.vlan_id} Native)"
+                return f"Uplink ({port_vlan.vlan_id})"  # 缩短显示
             else:
-                return "Uplink (无VLAN信息)"
+                return "Uplink"  # 最简短
 
     # Original logic (fallback)
     # Check for CDP Native VLAN

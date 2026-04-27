@@ -56,6 +56,11 @@ class LLDPCaptureListener:
             on_capture_complete: Callback when capture completes
         """
         try:
+            # 直接使用logging，UI会捕获并显示
+            log.warning("[ADAPTER] LLDPCaptureListener.start() called")
+            log.warning(f"[ADAPTER] Interface: {interface}")
+            log.warning(f"[ADAPTER] Duration: {duration}s")
+
             self._interface = interface
             self._duration = duration
             self._on_device_discovered = on_device_discovered
@@ -67,17 +72,21 @@ class LLDPCaptureListener:
             # Copilot版本使用线程池，但UI期望直接调用
             def device_callback(device):
                 """Forward device discovery to UI callback (thread-safe)"""
+                log.warning(f"[ADAPTER] Device callback: {device.system_name}")
                 if on_device_discovered:
                     try:
                         # 🔥 直接调用UI回调，不使用线程池
                         # UI会通过QueuedConnection确保在主线程中执行
                         on_device_discovered(device)
                     except Exception as e:
+                        log.error(f"[ADAPTER] ERROR in device callback: {e}")
                         log.exception(f"Device callback raised exception: {e}")
 
             # 🔥 禁用Copilot版本的线程池，直接调用回调
             # 这确保UI的信号槽机制能正常工作
             self._hybrid_capture._current_callback = device_callback
+
+            log.warning("[ADAPTER] Calling HybridCapture.start_capture()")
 
             # Start capture using HybridCapture
             self._hybrid_capture.start_capture(
@@ -86,13 +95,18 @@ class LLDPCaptureListener:
                 callback=device_callback
             )
 
+            log.warning("[ADAPTER] HybridCapture.start_capture() returned")
+
             # Set thread attribute for UI monitoring
             if hasattr(self._hybrid_capture, 'capture_thread'):
                 self.thread = self._hybrid_capture.capture_thread
+                log.warning(f"[ADAPTER] Capture thread: {self.thread}")
 
             log.info("Capture started successfully")
+            log.warning("[ADAPTER] Capture started successfully")
 
         except Exception as e:
+            log.error(f"[ADAPTER] EXCEPTION: {e}")
             log.exception(f"Failed to start capture: {e}")
             raise
 

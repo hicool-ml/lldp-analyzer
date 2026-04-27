@@ -669,39 +669,72 @@ class LLDPParser:
                 # Byte 6+: Optional flags
 
                 vlan_id = int.from_bytes(val[4:6], 'big')
-                logger.debug("✅ Extracted VLAN ID: %d", vlan_id)
+                logger.warning("🔍 Port VLAN ID (raw): %d (0x%04x)", vlan_id, vlan_id)
+
+                # 🔥 修复: 添加Port VLAN ID合理性检查
+                if vlan_id == 0:
+                    logger.warning("⚠️ Port VLAN ID = 0，忽略此TLV")
+                    return
+                elif vlan_id > 4094:
+                    logger.warning("⚠️ Invalid Port VLAN ID: %d (max 4094), ignoring", vlan_id)
+                    return
+                elif vlan_id == 512:
+                    # 512 = CAP_C_BRIDGE，可能是误解析
+                    logger.warning("⚠️ Port VLAN ID = 512 (CAP_C_BRIDGE flag)，可能是误解析，忽略")
+                    # 🔥 NEW: 不立即return，继续检查是否有其他有效VLAN
+                    logger.warning("⚠️ 但继续检查flags字段，可能有其他信息")
+
+                logger.warning("✅ Processing Port VLAN ID: %d", vlan_id)
 
                 tagged = False
                 is_pvid = False
 
                 if len(val) >= 7:
                     flags_byte = val[6]
-                    logger.debug("Flags byte: 0x%02x", flags_byte)
+                    logger.warning("Flags byte: 0x%02x", flags_byte)
                     tagged = bool(flags_byte & 0x01)
                     is_pvid = bool(flags_byte & 0x02)
-                    logger.debug("Tagged: %s, Is PVID: %s", tagged, is_pvid)
+                    logger.warning("Tagged: %s, Is PVID: %s", tagged, is_pvid)
 
                 # 🔧 修复：不在此时查找VLAN名称（因为VLAN Name TLV可能还没解析）
                 # VLAN名称关联将在所有TLV解析完成后进行
-                device.port_vlan = VLANInfo(
-                    vlan_id=vlan_id,
-                    vlan_name=None,  # 稍后关联
-                    tagged=tagged,
-                    is_pvid=is_pvid
-                )
-                logger.debug("✅✅✅ Port VLAN ID %d stored to device.port_vlan!", vlan_id)
+                # 🔥 FIX: 只有当vlan_id不是512时才存储
+                if vlan_id != 512:
+                    device.port_vlan = VLANInfo(
+                        vlan_id=vlan_id,
+                        vlan_name=None,  # 稍后关联
+                        tagged=tagged,
+                        is_pvid=is_pvid
+                    )
+                    logger.warning("✅✅✅ Port VLAN ID %d stored to device.port_vlan!", vlan_id)
+                else:
+                    logger.warning("❌ Port VLAN ID = 512，NOT stored (filtered out)")
             else:
                 logger.debug("❌ Port VLAN ID TLV too short: %d bytes", len(val))
             return
 
         # Subtype 2: Port Protocol VLAN ID
         elif subtype == 2:
-            logger.debug("Port Protocol VLAN ID TLV")
+            logger.warning("🔍 Port Protocol VLAN ID TLV")
             if len(val) >= 6:
                 protocol_vlan_id = int.from_bytes(val[4:6], 'big')
-                logger.debug("Protocol VLAN ID: %d", protocol_vlan_id)
-                # 存储到设备对象
-                device.protocol_vlan_id = protocol_vlan_id
+                logger.warning("🔍 Protocol VLAN ID (raw): %d (0x%04x)", protocol_vlan_id, protocol_vlan_id)
+
+                # 🔥 修复: 添加合理性检查
+                # 正常的VLAN ID范围: 1-4094 (12-bit)
+                # 512 = 0x0200 = 1 << 9 = CAP_C_BRIDGE，可能是误将Capabilities当作VLAN ID
+                if protocol_vlan_id == 0:
+                    logger.warning("⚠️ Protocol VLAN ID = 0，忽略")
+                elif protocol_vlan_id > 4094:
+                    logger.warning("⚠️ Invalid Protocol VLAN ID: %d (max 4094), ignoring", protocol_vlan_id)
+                elif protocol_vlan_id == 512:
+                    # 512 = CAP_C_BRIDGE标志位，很可能是误解析
+                    logger.warning("⚠️ Protocol VLAN ID = 512 (CAP_C_BRIDGE flag)，可能是误解析，忽略")
+                else:
+                    logger.warning("✅ Protocol VLAN ID: %d", protocol_vlan_id)
+                    # 存储到设备对象
+                    device.protocol_vlan_id = protocol_vlan_id
+                    logger.warning("✅✅✅ Protocol VLAN ID %d stored!", protocol_vlan_id)
 
         # Subtype 3: VLAN Name
         elif subtype == 3:

@@ -83,7 +83,8 @@ class InfoCard(QGroupBox):
             }
         """)
         self.layout = QVBoxLayout()
-        self.layout.setSpacing(8)
+        self.layout.setSpacing(12)  # 增加行间距，防止字符被遮挡
+        self.layout.setContentsMargins(12, 20, 12, 12)  # 增加上下边距
         # Set minimum size to prevent text cutoff
         self.setMinimumWidth(250)
         self.setLayout(self.layout)
@@ -94,14 +95,17 @@ class InfoCard(QGroupBox):
 
         label_name = QLabel(name)
         label_value = QLabel(value)
-        label_value.setAlignment(Qt.AlignmentFlag.AlignRight)
+        label_value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
         # Apply specific styles to each label
         label_name.setStyleSheet("color:#94a3b8; font-size:13px;")
         label_value.setStyleSheet("color:#22c55e; font-weight:600; font-size:13px;")
-        # Ensure text doesn't get cut off
+
+        # 🔥 修复：防止字符下半部分被遮挡
         label_value.setTextInteractionFlags(Qt.TextInteractionFlag.NoTextInteraction)
-        label_value.setWordWrap(False)
+
+        # 设置最小高度，确保字符完整显示（字体高度+行距）
+        label_value.setMinimumHeight(20)  # 13px字体需要至少20px高度
 
         # Set stretch factors to prevent text cutoff
         row.addWidget(label_name, 1)  # Name gets 1/4 space
@@ -240,13 +244,13 @@ class LLDPProfessionalWindow(QWidget):
         # Build UI
         self.setup_ui()
 
-        # Logging configuration
+        # Logging configuration (must be after setup_ui so log widgets exist)
         self.log_buffer = []
         self.debug_enabled = False
         self.debug_log_queue = deque(maxlen=1000)  # 优化: 使用deque避免内存问题
         self.debug_log_timer = None
 
-        # Setup logging
+        # Setup logging (configures Python logging system to redirect to UI)
         self.setup_logging()
 
         # Setup DEBUG output capture
@@ -338,6 +342,44 @@ class LLDPProfessionalWindow(QWidget):
 
     def setup_logging(self):
         """Setup logging to redirect print statements to UI"""
+        # 配置Python logging系统，将日志重定向到UI
+        import logging
+
+        class UILogHandler(logging.Handler):
+            """Custom logging handler that sends logs to UI"""
+            def __init__(self, ui_window):
+                super().__init__()
+                self.ui_window = ui_window
+
+            def emit(self, record):
+                try:
+                    # 格式化日志消息
+                    msg = self.format(record)
+                    # 根据日志级别选择UI日志级别
+                    if record.levelno >= logging.ERROR:
+                        level = "ERROR"
+                    elif record.levelno >= logging.WARNING:
+                        level = "WARNING"
+                    elif record.levelno >= logging.INFO:
+                        level = "INFO"
+                    else:
+                        level = "DEBUG"
+
+                    # 发送到UI日志窗口（通过信号确保线程安全）
+                    self.ui_window.log(msg, level)
+                except Exception:
+                    pass
+
+        # 创建UI日志处理器
+        ui_handler = UILogHandler(self)
+        ui_handler.setFormatter(logging.Formatter('%(message)s'))
+
+        # 配置根日志记录器
+        root_logger = logging.getLogger()
+        root_logger.setLevel(logging.DEBUG)  # 捕获所有级别的日志
+        root_logger.handlers.clear()  # 清除现有处理器
+        root_logger.addHandler(ui_handler)  # 添加UI处理器
+
         self.log("系统初始化完成")
         self.log("LLDP/CDP 双协议支持已启用")
         self.log("准备就绪 - 请选择网络适配器")
@@ -1011,6 +1053,180 @@ class LLDPProfessionalWindow(QWidget):
             self.adapter_combo.setCurrentIndex(0)
             self.log(f"使用默认网卡: {self.interfaces[0].description}", "INFO")
 
+    def _check_npcap_status(self):
+        """
+        🔥 检查Npcap安装状态并提供明确的安装提示
+
+        Returns:
+            bool: True表示可以继续，False表示需要安装Npcap
+        """
+        try:
+            import ctypes
+            import os
+            import sys
+
+            # 检查Npcap DLL是否存在
+            npcap_paths = [
+                "wpcap.dll",  # WinPcap
+                "npcap.dll",  # Npcap
+            ]
+
+            # 检查系统目录
+            system_dirs = [
+                os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'System32'),
+                os.path.join(os.environ.get('SystemRoot', 'C:\\Windows'), 'SysWOW64'),  # 32位兼容
+            ]
+
+            npcap_found = False
+            for sys_dir in system_dirs:
+                for npcap_dll in npcap_paths:
+                    if os.path.exists(os.path.join(sys_dir, npcap_dll)):
+                        npcap_found = True
+                        print(f"[DEBUG] ✅ Found {npcap_dll} in {sys_dir}")
+                        break
+                if npcap_found:
+                    break
+
+            if not npcap_found:
+                print(f"[DEBUG] ❌ Npcap not found, will use Scapy fallback")
+
+                # 🔥 显示友好的安装提示对话框
+                msg_box = QMessageBox(self)
+                msg_box.setWindowTitle("网络捕获驱动未安装")
+                msg_box.setTextFormat(Qt.TextFormat.RichText)
+                msg_box.setIcon(QMessageBox.Icon.Warning)
+
+                message = """
+                <h2>⚠️ 网络捕获驱动未安装</h2>
+                <p>LLDP Analyzer需要网络捕获驱动才能工作。</p>
+
+                <h3>📥 推荐方案：安装Npcap (性能最佳)</h3>
+                <p><b>优点:</b></p>
+                <ul>
+                <li>✅ 捕获性能提升 <b>10倍</b> (30K pps vs 3K pps)</li>
+                <li>✅ CPU使用率降低 <b>5倍</b></li>
+                <li>✅ 专业网络分析工具标准</li>
+                </ul>
+
+                <p><b>安装步骤:</b></p>
+                <ol>
+                <li>点击下方"否"按钮选择下载方式</li>
+                <li>运行安装程序，<b>务必勾选</b>:
+                    <ul>
+                    <li>✅ "Install Npcap in Service Mode"</li>
+                    <li>✅ "Support Raw 802.11 Traffic"</li>
+                    </ul>
+                </li>
+                <li>安装完成后重新运行此程序</li>
+                </ol>
+
+                <h3>🔄 备用方案：使用Scapy (已安装)</h3>
+                <p><b>如果不想安装Npcap，程序将自动使用Scapy兼容模式。</b></p>
+                <p><b>⚠️ 注意:</b></p>
+                <ul>
+                <li>❌ Scapy模式<b>必须以管理员身份运行</b></li>
+                <li>⚠️ 性能较低 (3K pps vs Npcap的30K pps)</li>
+                <li>⚠️ CPU使用率较高</li>
+                <li>⚠️ 可能影响高频报文捕获</li>
+                </ul>
+
+                <p><b>是否继续使用Scapy模式？</b></p>
+                """
+
+                msg_box.setText(message)  # 🔥 设置对话框内容
+                msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                msg_box.setDefaultButton(QMessageBox.StandardButton.Yes)
+
+                reply = msg_box.exec()
+
+                if reply == QMessageBox.StandardButton.No:
+                    print(f"[DEBUG] User chose to install Npcap")
+                    # 询问用户想要哪个下载方式
+                    download_choice = QMessageBox.question(
+                        self,
+                        "选择下载方式",
+                        "请选择Npcap下载方式：\n\n"
+                        "是 - 直接下载 Npcap 1.87 (推荐)\n"
+                        "否 - 访问Npcap官网选择版本\n\n"
+                        "选择'否'将打开浏览器。",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.Yes
+                    )
+
+                    if download_choice == QMessageBox.StandardButton.Yes:
+                        # 直接下载
+                        import webbrowser
+                        webbrowser.open('https://npcap.com/dist/npcap-1.87.exe')
+                    else:
+                        # 访问官网
+                        import webbrowser
+                        webbrowser.open('https://npcap.com/#download')
+                    return False
+                else:
+                    print(f"[DEBUG] User chose to use Scapy fallback")
+                    # 🔥 检查管理员权限（Scapy必需）
+                    try:
+                        import ctypes
+                        is_admin = ctypes.windll.shell32.IsUserAnAdmin()
+                        if not is_admin:
+                            print(f"[DEBUG] ❌ No admin rights for Scapy")
+                            admin_msg = QMessageBox(self)
+                            admin_msg.setWindowTitle("Scapy模式需要管理员权限")
+                            admin_msg.setTextFormat(Qt.TextFormat.RichText)
+                            admin_msg.setIcon(QMessageBox.Icon.Warning)
+
+                            admin_message = """
+                            <h2>⚠️ Scapy模式需要管理员权限</h2>
+                            <p>Scapy兼容模式必须以管理员身份运行才能捕获网络数据包。</p>
+
+                            <h3>📋 解决步骤:</h3>
+                            <ol>
+                            <li>关闭此程序</li>
+                            <li>右键点击 <b>LLDP_Analyzer_FINAL.exe</b></li>
+                            <li>选择 <b>"以管理员身份运行"</b></li>
+                            <li>在UAC提示中点击"是"</li>
+                            </ol>
+
+                            <h3>💡 推荐:</h3>
+                            <p>为了避免每次都需要管理员权限，建议安装Npcap驱动。</p>
+                            <p>Npcap可以提供更好的性能，并且不需要管理员权限。</p>
+
+                            <p><b>是否现在就安装Npcap？</b></p>
+                            """
+
+                            admin_msg.setText(admin_message)
+                            admin_msg.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+                            admin_msg.setDefaultButton(QMessageBox.StandardButton.Yes)
+
+                            admin_reply = admin_msg.exec()
+
+                            if admin_reply == QMessageBox.StandardButton.Yes:
+                                # 用户选择安装Npcap
+                                import webbrowser
+                                webbrowser.open('https://npcap.com/dist/npcap-1.87.exe')
+                                return False
+                            else:
+                                # 用户坚持使用Scapy（但会失败）
+                                QMessageBox.warning(
+                                    self,
+                                    "警告",
+                                    "⚠️ 没有管理员权限，Scasy模式将无法工作！\n\n"
+                                    "请重新以管理员身份运行，或安装Npcap驱动。"
+                                )
+                                return False
+                        else:
+                            print(f"[DEBUG] ✅ Has admin rights for Scapy")
+                    except Exception as e:
+                        print(f"[DEBUG] Admin check failed: {e}, continuing anyway")
+                    return True
+
+            print(f"[DEBUG] ✅ Npcap check passed, will use high-performance mode")
+            return True
+
+        except Exception as e:
+            print(f"[DEBUG] Npcap check failed: {e}, continuing anyway")
+            return True
+
     def start_capture(self):
         """Start LLDP capture"""
         #  UX优化：立即禁用按钮，防止双击
@@ -1018,6 +1234,10 @@ class LLDPProfessionalWindow(QWidget):
         self.start_btn.repaint()  # 强制重绘，确保UI立即更新
 
         print(f"[DEBUG] ===== start_capture called =====", flush=True)
+
+        # 🔥 新增：检查Npcap安装状态
+        if not self._check_npcap_status():
+            return
 
         if not hasattr(self, 'interfaces') or not self.interfaces:
             print(f"[DEBUG] No interfaces available!", flush=True)
@@ -1044,9 +1264,31 @@ class LLDPProfessionalWindow(QWidget):
         has_ip = hasattr(interface, 'ip') and interface.ip is not None
 
         if has_ip:
-            self.log(f"网卡IP: {interface.ip} - 链路正常", "SUCCESS")
-            print(f"[DEBUG] Interface has IP: {interface.ip}", flush=True)
-            print(f"[DEBUG] Physical link appears to be UP", flush=True)
+            # 🔥 检查是否是APIPA地址（169.254.x.x）
+            if interface.ip.startswith("169.254."):
+                self.log(f"网卡IP: {interface.ip} - APIPA地址，可能未连接网络", "WARNING")
+                print(f"[DEBUG] Interface has APIPA address: {interface.ip}", flush=True)
+                print(f"[DEBUG] This usually means NO DHCP connection!", flush=True)
+
+                # 弹出警告
+                QMessageBox.warning(
+                    self,
+                    "网络连接警告",
+                    f"⚠️ 网卡IP是 {interface.ip}（APIPA地址）\n\n"
+                    f"这通常意味着：\n"
+                    f"1. 网卡没有连接到网络\n"
+                    f"2. DHCP服务器不可用\n"
+                    f"3. 网络配置有误\n\n"
+                    f"LLDP/CDP设备通常需要真实的网络连接才能发现。\n\n"
+                    f"请检查：\n"
+                    f"- 网线是否已插入\n"
+                    f"- 是否连接到交换机/路由器\n"
+                    f"- 网卡驱动是否正常工作"
+                )
+            else:
+                self.log(f"网卡IP: {interface.ip} - 链路正常", "SUCCESS")
+                print(f"[DEBUG] Interface has IP: {interface.ip}", flush=True)
+                print(f"[DEBUG] Physical link appears to be UP", flush=True)
         else:
             self.log(f"网卡无IP地址 - 链路可能未连接", "WARNING")
             print(f"[DEBUG] Interface has NO IP address!", flush=True)
@@ -1743,19 +1985,15 @@ class LLDPProfessionalWindow(QWidget):
             if hasattr(self, 'progress_timer') and self.progress_timer:
                 self.progress_timer.stop()
 
-            # 优化3: 安全停止网络监听器（等待线程完全退出）
+            # 优化3: 安全停止网络监听器（不阻塞等待）
             if hasattr(self, 'listener') and self.listener:
                 self.listener.stop()
-                # 等待监听器线程完全退出（防止竞态条件）
+                # 🔥 修复假死：不等待线程退出，让daemon线程自然退出
+                # daemon线程会在主进程退出时自动结束
                 if hasattr(self.listener, 'thread') and self.listener.thread:
-                    wait_time = 0
-                    while self.listener.thread.is_alive() and wait_time < 2000:  # 最多等待2秒
-                        QApplication.processEvents()
-                        import time
-                        time.sleep(0.1)
-                        wait_time += 100
                     if self.listener.thread.is_alive():
-                        self.log("警告: 监听器线程未能在2秒内退出", "WARNING")
+                        log.warning("Capture thread is running (will exit with app)")
+                    # 不等待，避免UI假死
 
             # 优化4: 处理剩余的日志队列（防止日志丢失）
             if hasattr(self, 'debug_log_queue') and self.debug_log_queue:
