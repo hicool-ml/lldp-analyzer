@@ -11,6 +11,7 @@ from datetime import datetime
 
 class ChassisIDType(Enum):
     """Chassis ID subtypes"""
+
     NETWORK_ADDRESS = 1
     INTERFACE_NAME = 2
     CHASSIS_COMPONENT = 3
@@ -22,6 +23,7 @@ class ChassisIDType(Enum):
 
 class PortIDType(Enum):
     """Port ID subtypes"""
+
     INTERFACE_ALIAS = 1
     PORT_COMPONENT = 2
     MAC_ADDRESS = 3
@@ -34,6 +36,7 @@ class PortIDType(Enum):
 @dataclass
 class LLDPChassisID:
     """Chassis ID model"""
+
     value: str
     type: ChassisIDType
 
@@ -55,6 +58,7 @@ class LLDPChassisID:
 @dataclass
 class LLDPPortID:
     """Port ID model"""
+
     value: str
     type: PortIDType
 
@@ -76,6 +80,7 @@ class LLDPPortID:
 @dataclass
 class VLANInfo:
     """VLAN configuration"""
+
     vlan_id: int
     vlan_name: Optional[str] = None
     tagged: bool = False
@@ -85,6 +90,7 @@ class VLANInfo:
 @dataclass
 class PoEInfo:
     """Power over Ethernet information"""
+
     supported: bool = False
     enabled: bool = False
     power_type: Optional[str] = None  # Type 1 / Type 2
@@ -99,6 +105,7 @@ class PoEInfo:
 @dataclass
 class LinkAggregationInfo:
     """Link Aggregation information (IEEE 802.3)"""
+
     supported: bool = False
     enabled: bool = False
     aggregation_id: Optional[int] = None  # Aggregation group ID
@@ -108,6 +115,7 @@ class LinkAggregationInfo:
 @dataclass
 class MACPHYConfig:
     """MAC/PHY Configuration and Status (IEEE 802.3)"""
+
     autoneg_support: bool = False
     autoneg_enabled: bool = False
     operational_mau_type: Optional[int] = None  # Operational MAU type
@@ -120,6 +128,7 @@ class MACPHYConfig:
 @dataclass
 class Dot1XInfo:
     """802.1X authentication information"""
+
     enabled: bool = False
     auth_mode: Optional[str] = None
     auth_status: Optional[str] = None
@@ -128,6 +137,7 @@ class Dot1XInfo:
 @dataclass
 class DeviceCapabilities:
     """System capabilities"""
+
     bridge: bool = False
     repeater: bool = False
     router: bool = False
@@ -156,32 +166,53 @@ class DeviceCapabilities:
     def get_all_capabilities(self) -> List[str]:
         """Get list of all capability names (supported capabilities)"""
         caps = []
-        if self.bridge: caps.append("交换机")
-        if self.repeater: caps.append("中继器")
-        if self.router: caps.append("路由器")
-        if self.telephone: caps.append("IP电话")
-        if self.docsis: caps.append("线缆调制")
-        if self.station: caps.append("终端站")
-        if self.wlan: caps.append("无线接入点")
-        if self.c_vlan: caps.append("客户VLAN")
-        if self.c_bridge: caps.append("客户桥接")
-        if self.s_vlan: caps.append("服务VLAN")
-        if self.twamp: caps.append("双向测量")
+        if self.bridge:
+            caps.append("交换机")
+        if self.repeater:
+            caps.append("中继器")
+        if self.router:
+            caps.append("路由器")
+        if self.telephone:
+            caps.append("IP电话")
+        if self.docsis:
+            caps.append("线缆调制")
+        if self.station:
+            caps.append("终端站")
+        if self.wlan:
+            caps.append("无线接入点")
+        if self.c_vlan:
+            caps.append("客户VLAN")
+        if self.c_bridge:
+            caps.append("客户桥接")
+        if self.s_vlan:
+            caps.append("服务VLAN")
+        if self.twamp:
+            caps.append("双向测量")
         return caps
 
     def get_enabled_capabilities(self) -> List[str]:
         """Get list of enabled capability names (当前启用的能力)"""
         caps = []
-        if self.bridge_enabled: caps.append("交换机")
-        if self.repeater_enabled: caps.append("中继器")
-        if self.router_enabled: caps.append("路由器")
-        if self.telephone_enabled: caps.append("IP电话")
-        if self.docsis_enabled: caps.append("线缆调制")
-        if self.station_enabled: caps.append("终端站")
-        if self.c_vlan_enabled: caps.append("客户VLAN")
-        if self.c_bridge_enabled: caps.append("客户桥接")
-        if self.s_vlan_enabled: caps.append("服务VLAN")
-        if self.twamp_enabled: caps.append("双向测量")
+        if self.bridge_enabled:
+            caps.append("交换机")
+        if self.repeater_enabled:
+            caps.append("中继器")
+        if self.router_enabled:
+            caps.append("路由器")
+        if self.telephone_enabled:
+            caps.append("IP电话")
+        if self.docsis_enabled:
+            caps.append("线缆调制")
+        if self.station_enabled:
+            caps.append("终端站")
+        if self.c_vlan_enabled:
+            caps.append("客户VLAN")
+        if self.c_bridge_enabled:
+            caps.append("客户桥接")
+        if self.s_vlan_enabled:
+            caps.append("服务VLAN")
+        if self.twamp_enabled:
+            caps.append("双向测量")
         return caps
 
 
@@ -191,6 +222,7 @@ class LLDPDevice:
     Complete LLDP Device Model
     Structured representation of a discovered LLDP device
     """
+
     # Basic identification
     chassis_id: Optional[LLDPChassisID] = None
     port_id: Optional[LLDPPortID] = None
@@ -239,21 +271,25 @@ class LLDPDevice:
         return {
             "chassis_id": {
                 "value": self.chassis_id.value if self.chassis_id else None,
-                "type": self.chassis_id.type.name if self.chassis_id else None
+                "type": self.chassis_id.type.name if self.chassis_id else None,
             },
             "port_id": {
                 "value": self.port_id.value if self.port_id else None,
-                "type": self.port_id.type.name if self.port_id else None
+                "type": self.port_id.type.name if self.port_id else None,
             },
             "port_description": self.port_description,
             "system_name": self.system_name,
             "system_description": self.system_description,
             "management_ip": self.management_ip,
-            "port_vlan": {
-                "vlan_id": self.port_vlan.vlan_id if self.port_vlan else None,
-                "vlan_name": self.port_vlan.vlan_name if self.port_vlan else None,
-                "tagged": self.port_vlan.tagged if self.port_vlan else None,
-            } if self.port_vlan else None,
+            "port_vlan": (
+                {
+                    "vlan_id": self.port_vlan.vlan_id if self.port_vlan else None,
+                    "vlan_name": self.port_vlan.vlan_name if self.port_vlan else None,
+                    "tagged": self.port_vlan.tagged if self.port_vlan else None,
+                }
+                if self.port_vlan
+                else None
+            ),
             "poe": {
                 "supported": self.poe.supported,
                 "enabled": self.poe.enabled,

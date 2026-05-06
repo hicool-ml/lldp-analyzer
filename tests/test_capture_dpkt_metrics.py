@@ -7,6 +7,7 @@ Tests cover:
 3. Callback cleanup
 4. Resource cleanup verification
 """
+
 import pytest
 import time
 from unittest.mock import Mock, MagicMock, patch
@@ -37,7 +38,7 @@ class TestMetricsTracking:
 
         # Mock LLDP packet
         mock_eth = MagicMock()
-        mock_eth.type = 0x88cc
+        mock_eth.type = 0x88CC
         mock_eth.data = b"data"
 
         # Mock parser
@@ -65,7 +66,7 @@ class TestMetricsTracking:
 
         # Mock packet that will fail parsing
         mock_eth = MagicMock()
-        mock_eth.type = 0x88cc
+        mock_eth.type = 0x88CC
         mock_eth.data = b"bad data"
 
         # Mock parser to return None
@@ -108,6 +109,7 @@ class TestStopCaptureFlush:
 
         # Mock callback to track invocations
         callback_calls = []
+
         def track_callback(device):
             callback_calls.append(device)
 
@@ -117,7 +119,9 @@ class TestStopCaptureFlush:
         for i in range(3):
             device = LLDPDevice()
             device.chassis_id = f"device_{i}"
-            result = CaptureResult(device=device, timestamp=time.time(), interface="test")
+            result = CaptureResult(
+                device=device, timestamp=time.time(), interface="test"
+            )
             capture.device_queue.put(result)
 
         # Stop capture
@@ -220,18 +224,21 @@ class TestResourceCleanup:
         capture.metrics["filtered"] = 93
 
         # Mock logger
-        with patch('lldp.capture_dpkt.log') as mock_log:
+        with patch("lldp.capture_dpkt.log") as mock_log:
             capture.stop_capture()
 
             # Verify metrics were logged
             assert mock_log.info.called
             # Check the call arguments contain the metric values
             call_args = mock_log.info.call_args
-            assert call_args[0][0] == "📊 Capture metrics: rx_packets=%d, parsed=%d, parse_errors=%d, callbacks=%d, filtered=%d"
+            assert (
+                call_args[0][0]
+                == "📊 Capture metrics: rx_packets=%d, parsed=%d, parse_errors=%d, callbacks=%d, filtered=%d"
+            )
             assert call_args[0][1] == 100  # rx_packets
-            assert call_args[0][2] == 5   # parsed
-            assert call_args[0][3] == 2   # parse_errors
-            assert call_args[0][4] == 5   # callbacks
+            assert call_args[0][2] == 5  # parsed
+            assert call_args[0][3] == 2  # parse_errors
+            assert call_args[0][4] == 5  # callbacks
             assert call_args[0][5] == 93  # filtered
 
     def test_concurrent_stop_and_produce(self):
@@ -244,8 +251,10 @@ class TestResourceCleanup:
         capture.backend = MagicMock()
 
         callback_calls = []
+
         def track_callback(device):
             callback_calls.append(device)
+
         capture._current_callback = track_callback
 
         # Start producer thread
@@ -253,7 +262,9 @@ class TestResourceCleanup:
             for i in range(10):
                 device = LLDPDevice()
                 device.chassis_id = f"device_{i}"
-                result = CaptureResult(device=device, timestamp=time.time(), interface="test")
+                result = CaptureResult(
+                    device=device, timestamp=time.time(), interface="test"
+                )
                 capture.device_queue.put(result)
                 time.sleep(0.01)
 

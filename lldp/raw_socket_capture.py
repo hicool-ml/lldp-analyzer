@@ -5,9 +5,9 @@ Windows: pcapy-ng
 完全不依赖Scapy
 """
 
-import sys
 import logging
 import platform
+import socket
 import threading
 import time
 from typing import Callable, Optional, Any
@@ -53,7 +53,9 @@ class LinuxRawSocketCapture(RawSocketCapture):
     使用AF_PACKET socket，无需任何第三方库
     """
 
-    def __init__(self, interface: str, callback: Callable[[bytes], None], promisc: bool = True):
+    def __init__(
+        self, interface: str, callback: Callable[[bytes], None], promisc: bool = True
+    ):
         super().__init__(interface, callback)
         self.promisc = promisc
         self.socket: Optional[Any] = None
@@ -65,15 +67,12 @@ class LinuxRawSocketCapture(RawSocketCapture):
             return
 
         try:
-            import socket
             import struct
 
             # 创建Raw Socket
             # ETH_P_ALL = 0x0003 (接收所有链路层帧)
             self.socket = socket.socket(
-                socket.AF_PACKET,
-                socket.SOCK_RAW,
-                socket.htons(0x0003)
+                socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0003)
             )
 
             # 绑定到接口
@@ -83,7 +82,6 @@ class LinuxRawSocketCapture(RawSocketCapture):
             if self.promisc:
                 try:
                     # 尝试启用混杂模式
-                    import fcntl
                     struct.pack("I", 1)  # PROMISC flag
                 except Exception:
                     pass  # 某些系统可能不支持
@@ -96,8 +94,7 @@ class LinuxRawSocketCapture(RawSocketCapture):
 
             # 启动捕获线程
             self.capture_thread = threading.Thread(
-                target=self._capture_loop,
-                daemon=True
+                target=self._capture_loop, daemon=True
             )
             self.capture_thread.start()
 
@@ -120,10 +117,10 @@ class LinuxRawSocketCapture(RawSocketCapture):
 
                     # LLDP: 0x88cc
                     # CDP: 0x2000 (Cisco私有，需要检查DSAP)
-                    if ethertype == b'\x88\xcc':
+                    if ethertype == b"\x88\xcc":
                         # LLDP报文
                         self.callback(raw_data)
-                    elif ethertype == b'\x20\x00':
+                    elif ethertype == b"\x20\x00":
                         # 可能是CDP（需要进一步检查）
                         # CDP使用SNAP，检查LLC头
                         if len(raw_data) >= 22:
@@ -135,7 +132,7 @@ class LinuxRawSocketCapture(RawSocketCapture):
                             if dsap == 0xAA and ssap == 0xAA and ctrl == 0x03:
                                 # 检查OUI (Cisco: 0x00000C)
                                 oui = raw_data[17:20]
-                                if oui == b'\x00\x00\x0c':
+                                if oui == b"\x00\x00\x0c":
                                     self.callback(raw_data)
 
             except socket.timeout:
@@ -173,7 +170,9 @@ class WindowsPcapyCapture(RawSocketCapture):
     使用BPF内核过滤，性能优异
     """
 
-    def __init__(self, interface: str, callback: Callable[[bytes], None], promisc: bool = True):
+    def __init__(
+        self, interface: str, callback: Callable[[bytes], None], promisc: bool = True
+    ):
         super().__init__(interface, callback)
         self.promisc = promisc
         self.cap: Optional[Any] = None
@@ -191,9 +190,9 @@ class WindowsPcapyCapture(RawSocketCapture):
             # 参数: 设备名, snaplen, promisc, timeout_ms
             self.cap = pcapy.open_live(
                 self.interface,
-                65536,      # snaplen: 捕获完整数据包
+                65536,  # snaplen: 捕获完整数据包
                 self.promisc,  # promisc: 混杂模式
-                100         # timeout: 100ms超时
+                100,  # timeout: 100ms超时
             )
 
             # 🔥 性能关键：设置BPF内核过滤
@@ -206,8 +205,7 @@ class WindowsPcapyCapture(RawSocketCapture):
 
             # 启动捕获线程
             self.capture_thread = threading.Thread(
-                target=self._capture_loop,
-                daemon=True
+                target=self._capture_loop, daemon=True
             )
             self.capture_thread.start()
 
@@ -223,6 +221,7 @@ class WindowsPcapyCapture(RawSocketCapture):
 
     def _capture_loop(self):
         """捕获循环"""
+
         def _handler(hdr, data):
             """pcapy回调处理"""
             if self.is_capturing:
@@ -260,7 +259,9 @@ class MacOSPcapyCapture(RawSocketCapture):
     使用BPF过滤
     """
 
-    def __init__(self, interface: str, callback: Callable[[bytes], None], promisc: bool = True):
+    def __init__(
+        self, interface: str, callback: Callable[[bytes], None], promisc: bool = True
+    ):
         super().__init__(interface, callback)
         self.promisc = promisc
         self.cap: Optional[Any] = None
@@ -275,12 +276,7 @@ class MacOSPcapyCapture(RawSocketCapture):
             import pcapy
 
             # 打开捕获设备
-            self.cap = pcapy.open_live(
-                self.interface,
-                65536,
-                self.promisc,
-                100
-            )
+            self.cap = pcapy.open_live(self.interface, 65536, self.promisc, 100)
 
             # 设置BPF过滤
             bpf_filter = "ether proto 0x88cc or ether[20:2] == 0x2000"
@@ -291,8 +287,7 @@ class MacOSPcapyCapture(RawSocketCapture):
 
             # 启动捕获线程
             self.capture_thread = threading.Thread(
-                target=self._capture_loop,
-                daemon=True
+                target=self._capture_loop, daemon=True
             )
             self.capture_thread.start()
 
@@ -304,6 +299,7 @@ class MacOSPcapyCapture(RawSocketCapture):
 
     def _capture_loop(self):
         """捕获循环"""
+
         def _handler(hdr, data):
             """pcapy回调处理"""
             if self.is_capturing:
@@ -331,9 +327,7 @@ class MacOSPcapyCapture(RawSocketCapture):
 
 
 def create_capture_engine(
-    interface: str,
-    callback: Callable[[bytes], None],
-    promisc: bool = True
+    interface: str, callback: Callable[[bytes], None], promisc: bool = True
 ) -> RawSocketCapture:
     """
     创建适合当前平台的捕获引擎
@@ -360,6 +354,7 @@ def create_capture_engine(
 
 if __name__ == "__main__":
     """测试捕获引擎"""
+
     def packet_callback(data: bytes):
         """数据包回调"""
         if len(data) >= 14:
@@ -371,6 +366,7 @@ if __name__ == "__main__":
     # 测试接口扫描
     try:
         from lldp.interface_scanner import get_working_interfaces
+
         interfaces = get_working_interfaces()
 
         if interfaces:
@@ -402,4 +398,5 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"测试失败: {e}")
         import traceback
+
         traceback.print_exc()

@@ -16,7 +16,7 @@ TLV → Feature Extraction → Rule Engine (Priority-based) → Secondary Infere
 """
 
 from dataclasses import dataclass
-from typing import List, Optional, Dict, Set
+from typing import List, Optional, Set
 from enum import Enum
 
 from .utils import safe_get
@@ -46,7 +46,7 @@ def _normalize_capabilities(caps_obj) -> Set[str]:
         if safe_get(caps_obj, attr):
             tokens.add(token)
 
-    if caps_obj and hasattr(caps_obj, 'get_all_capabilities'):
+    if caps_obj and hasattr(caps_obj, "get_all_capabilities"):
         try:
             raw_caps = caps_obj.get_all_capabilities() or []
         except Exception:
@@ -70,39 +70,42 @@ def _normalize_capabilities(caps_obj) -> Set[str]:
 
 class PortRole(Enum):
     """Port roles based on network intent"""
-    ACCESS_TERMINAL = "Access Terminal"        # 终端接入（PC/打印机）
-    ACCESS_WIRELESS = "Access Wireless"        # 无线接入（AP）
-    ACCESS_VOICE = "Access Voice"              # 语音接入（IP电话）
-    TRUNK_NATIVE = "Trunk (Native)"            # 干道口（带Native VLAN）
-    TRUNK_NO_NATIVE = "Trunk (No Native)"      # 纯干道（无Native VLAN）
-    UPLINK_LAG = "Uplink (LAG)"                # 聚合上联
-    UPLINK_SINGLE = "Uplink (Single)"          # 单链路上联
-    CORE_DISTRIBUTION = "Core/Distribution"    # 核心/分发层
-    STORAGE_NETWORK = "Storage Network"        # 存储网络
-    INFRASTRUCTURE = "Infrastructure"          # 基础设施
+
+    ACCESS_TERMINAL = "Access Terminal"  # 终端接入（PC/打印机）
+    ACCESS_WIRELESS = "Access Wireless"  # 无线接入（AP）
+    ACCESS_VOICE = "Access Voice"  # 语音接入（IP电话）
+    TRUNK_NATIVE = "Trunk (Native)"  # 干道口（带Native VLAN）
+    TRUNK_NO_NATIVE = "Trunk (No Native)"  # 纯干道（无Native VLAN）
+    UPLINK_LAG = "Uplink (LAG)"  # 聚合上联
+    UPLINK_SINGLE = "Uplink (Single)"  # 单链路上联
+    CORE_DISTRIBUTION = "Core/Distribution"  # 核心/分发层
+    STORAGE_NETWORK = "Storage Network"  # 存储网络
+    INFRASTRUCTURE = "Infrastructure"  # 基础设施
     UNKNOWN = "Unknown"
 
 
 class DeviceType(Enum):
     """Device types based on capabilities and TLV"""
-    ACCESS_POINT = "Access Point"              # 无线接入点
-    IP_PHONE = "IP Phone"                      # IP电话
-    SWITCH = "Switch"                          # 交换机
-    ROUTER = "Router"                          # 路由器
-    FIREWALL = "Firewall"                      # 防火墙
-    SERVER = "Server"                          # 服务器
-    STORAGE = "Storage"                        # 存储设备
-    TERMINAL = "Terminal"                      # 终端设备（PC/打印机等）
+
+    ACCESS_POINT = "Access Point"  # 无线接入点
+    IP_PHONE = "IP Phone"  # IP电话
+    SWITCH = "Switch"  # 交换机
+    ROUTER = "Router"  # 路由器
+    FIREWALL = "Firewall"  # 防火墙
+    SERVER = "Server"  # 服务器
+    STORAGE = "Storage"  # 存储设备
+    TERMINAL = "Terminal"  # 终端设备（PC/打印机等）
     UNKNOWN = "Unknown"
 
 
 class NetworkIntent(Enum):
     """Network intent inferred from TLV combination"""
-    TERMINAL_ACCESS = "Terminal Access"        # 终端接入意图
-    WIRELESS_ACCESS = "Wireless Access"        # 无线覆盖意图
+
+    TERMINAL_ACCESS = "Terminal Access"  # 终端接入意图
+    WIRELESS_ACCESS = "Wireless Access"  # 无线覆盖意图
     VOICE_PROVISIONING = "Voice Provisioning"  # 语音部署意图
-    TRUNK_TRANSPORT = "Trunk Transport"        # 多VLAN传输意图
-    UPLINK_REDUNDANCY = "Uplink Redundancy"    # 上联冗余意图
+    TRUNK_TRANSPORT = "Trunk Transport"  # 多VLAN传输意图
+    UPLINK_REDUNDANCY = "Uplink Redundancy"  # 上联冗余意图
     HIGH_SPEED_STORAGE = "High-Speed Storage"  # 高速存储意图
     NETWORK_MANAGEMENT = "Network Management"  # 网络管理意图
 
@@ -115,43 +118,44 @@ class PortFeatures:
     🔥 关键创新：将TLV原始数据转换为语义特征集合
     这些特征是规则引擎的输入，也是二次推断的基础
     """
+
     # VLAN特征
-    has_port_vlan: bool = False           # 有Port VLAN ID
-    has_protocol_vlan: bool = False       # 有Protocol VLAN ID
-    port_vlan_tagged: bool = False        # Port VLAN是Tagged
+    has_port_vlan: bool = False  # 有Port VLAN ID
+    has_protocol_vlan: bool = False  # 有Protocol VLAN ID
+    port_vlan_tagged: bool = False  # Port VLAN是Tagged
 
     # 链路聚合特征
-    is_aggregated: bool = False           # 启用链路聚合
+    is_aggregated: bool = False  # 启用链路聚合
     aggregation_id: Optional[int] = None  # 聚合组ID
 
     # MTU特征
-    high_mtu: bool = False               # MTU > 2000 (存储网络特征)
-    jumbo_frame: bool = False            # MTU > 9000 (巨帧)
+    high_mtu: bool = False  # MTU > 2000 (存储网络特征)
+    jumbo_frame: bool = False  # MTU > 9000 (巨帧)
 
     # PoE特征
-    has_poe: bool = False                # 支持PoE供电
+    has_poe: bool = False  # 支持PoE供电
     poe_power_allocated: Optional[int] = None  # 分配功率(mW)
 
     # 设备能力特征
-    is_router: bool = False              # 具备路由能力
-    is_bridge: bool = False              # 具备桥接能力
-    is_wlan: bool = False                # 无线能力
-    is_repeater: bool = False            # 中继器能力
+    is_router: bool = False  # 具备路由能力
+    is_bridge: bool = False  # 具备桥接能力
+    is_wlan: bool = False  # 无线能力
+    is_repeater: bool = False  # 中继器能力
 
     # 速率特征
-    speed_1g_plus: bool = False          # 速率 >= 1G
-    speed_10g_plus: bool = False         # 速率 >= 10G
-    duplex_full: bool = False            # 全双工
+    speed_1g_plus: bool = False  # 速率 >= 1G
+    speed_10g_plus: bool = False  # 速率 >= 10G
+    duplex_full: bool = False  # 全双工
 
     # 管理特征
-    has_management_ip: bool = False      # 有管理地址
-    has_system_description: bool = False # 有系统描述
+    has_management_ip: bool = False  # 有管理地址
+    has_system_description: bool = False  # 有系统描述
 
     # VLAN名称特征（业务识别）
-    has_mgmt_vlan: bool = False          # 管理网络VLAN
-    has_data_vlan: bool = False          # 数据网络VLAN
-    has_voice_vlan: bool = False         # 语音网络VLAN
-    has_storage_vlan: bool = False       # 存储网络VLAN
+    has_mgmt_vlan: bool = False  # 管理网络VLAN
+    has_data_vlan: bool = False  # 数据网络VLAN
+    has_voice_vlan: bool = False  # 语音网络VLAN
+    has_storage_vlan: bool = False  # 存储网络VLAN
 
 
 @dataclass
@@ -161,17 +165,20 @@ class PortIntentProfile:
 
     🔥 v3.0升级：reasons现在是规则ID集合（RuleID），支持统计分析
     """
-    role: PortRole                      # 端口角色
-    device_type: DeviceType              # 设备类型（新增）
-    intent: NetworkIntent               # 网络意图
-    confidence: int                     # 置信度 (0-100)
-    features: PortFeatures              # 特征抽象层（新增）
-    tlv_evidence: List[str]             # TLV证据（哪些TLV支持这个推断）
-    operational_insight: str            # 运维洞察（这对NMS有什么价值）
-    configuration_suggestion: str       # 配置建议（网络应该怎么配置）
-    is_managed: bool                    # 是否受管设备（有Management Address）
-    auto_discovery_issues: List[str]    # 自动发现的问题（性能瓶颈、配置错误等）
-    semantic_reasons: Set["RuleID"]       # 🔥 v3.0: 规则ID集合，支持统计和二次推断（前向引用）
+
+    role: PortRole  # 端口角色
+    device_type: DeviceType  # 设备类型（新增）
+    intent: NetworkIntent  # 网络意图
+    confidence: int  # 置信度 (0-100)
+    features: PortFeatures  # 特征抽象层（新增）
+    tlv_evidence: List[str]  # TLV证据（哪些TLV支持这个推断）
+    operational_insight: str  # 运维洞察（这对NMS有什么价值）
+    configuration_suggestion: str  # 配置建议（网络应该怎么配置）
+    is_managed: bool  # 是否受管设备（有Management Address）
+    auto_discovery_issues: List[str]  # 自动发现的问题（性能瓶颈、配置错误等）
+    semantic_reasons: Set[
+        "RuleID"
+    ]  # 🔥 v3.0: 规则ID集合，支持统计和二次推断（前向引用）
 
 
 def extract_features(device) -> PortFeatures:
@@ -187,7 +194,7 @@ def extract_features(device) -> PortFeatures:
 
     # ========== 设备能力特征提取（优先处理，厂商差异最大）==========
     # 🔥 关键修复: Ruijie等厂商可能不发送Capabilities TLV
-    caps_obj = safe_get(device, 'capabilities')
+    caps_obj = safe_get(device, "capabilities")
 
     capability_tokens = _normalize_capabilities(caps_obj)
     features.is_router = "router" in capability_tokens
@@ -196,70 +203,70 @@ def extract_features(device) -> PortFeatures:
     features.is_repeater = "repeater" in capability_tokens
 
     # ========== VLAN特征提取 ==========
-    port_vlan = safe_get(device, 'port_vlan')
-    protocol_vlan = safe_get(device, 'protocol_vlan_id')
+    port_vlan = safe_get(device, "port_vlan")
+    protocol_vlan = safe_get(device, "protocol_vlan_id")
 
     features.has_port_vlan = port_vlan is not None
     features.has_protocol_vlan = protocol_vlan is not None
 
     if port_vlan:
-        features.port_vlan_tagged = safe_get(port_vlan, 'tagged', False)
+        features.port_vlan_tagged = safe_get(port_vlan, "tagged", False)
 
     # ========== 链路聚合特征提取 ==========
-    link_agg = safe_get(device, 'link_aggregation')
-    if link_agg and safe_get(link_agg, 'enabled'):
+    link_agg = safe_get(device, "link_aggregation")
+    if link_agg and safe_get(link_agg, "enabled"):
         features.is_aggregated = True
-        features.aggregation_id = safe_get(link_agg, 'aggregation_id')
+        features.aggregation_id = safe_get(link_agg, "aggregation_id")
 
     # ========== MTU特征提取 ==========
-    max_frame = safe_get(device, 'max_frame_size')
+    max_frame = safe_get(device, "max_frame_size")
     if max_frame:
         features.high_mtu = max_frame > 2000
         features.jumbo_frame = max_frame > 9000
 
     # ========== PoE特征提取 ==========
-    poe = safe_get(device, 'poe')
-    if poe and safe_get(poe, 'supported'):
+    poe = safe_get(device, "poe")
+    if poe and safe_get(poe, "supported"):
         features.has_poe = True
-        features.poe_power_allocated = safe_get(poe, 'power_allocated')
+        features.poe_power_allocated = safe_get(poe, "power_allocated")
 
     # ========== 速率特征提取（修复macphy缺失）==========
     # 🔥 关键修复: Ruijie等厂商可能不发送macphy_config
-    macphy = safe_get(device, 'macphy_config')
+    macphy = safe_get(device, "macphy_config")
 
     # 🔥 安全的速率提取: 处理macphy为None的情况
     if macphy:
-        speed = safe_get(macphy, 'speed', '')
+        speed = safe_get(macphy, "speed", "")
         if speed:  # 确保speed不是None
-            if '10G' in speed or '25G' in speed or '40G' in speed:
+            if "10G" in speed or "25G" in speed or "40G" in speed:
                 features.speed_10g_plus = True
                 features.speed_1g_plus = True
-            elif '1000' in speed or '1G' in speed:
+            elif "1000" in speed or "1G" in speed:
                 features.speed_1g_plus = True
 
-        duplex = safe_get(macphy, 'duplex', '')
+        duplex = safe_get(macphy, "duplex", "")
         if duplex:  # 确保duplex不是None
-            features.duplex_full = 'Full' in duplex
+            features.duplex_full = "Full" in duplex
 
     # ========== 管理特征提取 ==========
-    management_ip = safe_get(device, 'management_ip')
+    management_ip = safe_get(device, "management_ip")
     features.has_management_ip = management_ip and management_ip != "未提供"
 
-    system_desc = safe_get(device, 'system_description')
+    system_desc = safe_get(device, "system_description")
     features.has_system_description = bool(system_desc)
 
     # ========== VLAN名称特征提取（业务网络识别）==========
-    vlan_names = safe_get(device, 'vlans', [])
+    vlan_names = safe_get(device, "vlans", [])
     for vlan_info in vlan_names:
-        if hasattr(vlan_info, 'vlan_name') and vlan_info.vlan_name:
+        if hasattr(vlan_info, "vlan_name") and vlan_info.vlan_name:
             name_upper = vlan_info.vlan_name.upper()
-            if any(kw in name_upper for kw in ['MGMT', 'ADMIN', 'MGT']):
+            if any(kw in name_upper for kw in ["MGMT", "ADMIN", "MGT"]):
                 features.has_mgmt_vlan = True
-            elif any(kw in name_upper for kw in ['DATA', 'USER', 'OFFICE']):
+            elif any(kw in name_upper for kw in ["DATA", "USER", "OFFICE"]):
                 features.has_data_vlan = True
-            elif any(kw in name_upper for kw in ['VOICE', 'PHONE']):
+            elif any(kw in name_upper for kw in ["VOICE", "PHONE"]):
                 features.has_voice_vlan = True
-            elif any(kw in name_upper for kw in ['STOR', 'SAN', 'NAS']):
+            elif any(kw in name_upper for kw in ["STOR", "SAN", "NAS"]):
                 features.has_storage_vlan = True
 
     return features
@@ -299,12 +306,16 @@ class RuleID(Enum):
     RULE_DEVTYPE_JUMBO = ("RULE_DEVTYPE_JUMBO", "巨帧+10G → Storage")
     RULE_DEVTYPE_BRIDGE = ("RULE_DEVTYPE_BRIDGE", "桥接能力 → Switch")
     RULE_DEVTYPE_MGMTIP = ("RULE_DEVTYPE_MGMTIP", "管理IP+描述 → Server")
-    RULE_DEVTYPE_MGMTIP_TLV = ("RULE_DEVTYPE_MGMTIP_TLV", "🔥 Management Address TLV → 网络设备")
+    RULE_DEVTYPE_MGMTIP_TLV = (
+        "RULE_DEVTYPE_MGMTIP_TLV",
+        "🔥 Management Address TLV → 网络设备",
+    )
 
 
 @dataclass
 class InferenceRule:
     """推断规则数据结构"""
+
     rule_id: RuleID
     name: str
     priority: int  # 1=绝对规则, 2=二次推断
@@ -321,23 +332,27 @@ PRIORITY_RULES = [
         priority=1,
         condition_fn=lambda f, dt: f.is_aggregated,
         action_fn=lambda f, dt: PortRole.UPLINK_LAG,
-        description="检测到链路聚合 → 上联口"
+        description="检测到链路聚合 → 上联口",
     ),
     InferenceRule(
         rule_id=RuleID.RULE_PROTOCOL_VLAN,
         name="Protocol VLAN规则",
         priority=1,
         condition_fn=lambda f, dt: f.has_protocol_vlan,
-        action_fn=lambda f, dt: PortRole.TRUNK_NATIVE if f.has_port_vlan else PortRole.TRUNK_NO_NATIVE,
-        description="Protocol VLAN存在 → Trunk口"
+        action_fn=lambda f, dt: (
+            PortRole.TRUNK_NATIVE if f.has_port_vlan else PortRole.TRUNK_NO_NATIVE
+        ),
+        description="Protocol VLAN存在 → Trunk口",
     ),
     InferenceRule(
         rule_id=RuleID.RULE_HIGH_MTU_SPEED,
         name="高MTU+高速率规则",
         priority=1,
         condition_fn=lambda f, dt: f.high_mtu and f.speed_1g_plus,
-        action_fn=lambda f, dt: PortRole.STORAGE_NETWORK if f.jumbo_frame else PortRole.UPLINK_SINGLE,
-        description="高MTU+高速率 → 存储网络或上联口"
+        action_fn=lambda f, dt: (
+            PortRole.STORAGE_NETWORK if f.jumbo_frame else PortRole.UPLINK_SINGLE
+        ),
+        description="高MTU+高速率 → 存储网络或上联口",
     ),
     InferenceRule(
         rule_id=RuleID.RULE_ROUTER_CAPABILITY,
@@ -345,7 +360,7 @@ PRIORITY_RULES = [
         priority=1,
         condition_fn=lambda f, dt: f.is_router,
         action_fn=lambda f, dt: PortRole.UPLINK_SINGLE,
-        description="路由能力 → 上联口"
+        description="路由能力 → 上联口",
     ),
     InferenceRule(
         rule_id=RuleID.RULE_DEVTYPE_AP,
@@ -353,7 +368,7 @@ PRIORITY_RULES = [
         priority=1,
         condition_fn=lambda f, dt: dt == DeviceType.ACCESS_POINT,
         action_fn=lambda f, dt: PortRole.ACCESS_WIRELESS,
-        description="设备类型为AP → 无线接入口"
+        description="设备类型为AP → 无线接入口",
     ),
     InferenceRule(
         rule_id=RuleID.RULE_DEVTYPE_PHONE,
@@ -361,7 +376,7 @@ PRIORITY_RULES = [
         priority=1,
         condition_fn=lambda f, dt: dt == DeviceType.IP_PHONE,
         action_fn=lambda f, dt: PortRole.ACCESS_VOICE,
-        description="设备类型为IP电话 → 语音接入口"
+        description="设备类型为IP电话 → 语音接入口",
     ),
     InferenceRule(
         rule_id=RuleID.RULE_DEVTYPE_SWITCH,
@@ -369,7 +384,7 @@ PRIORITY_RULES = [
         priority=1,
         condition_fn=lambda f, dt: dt and dt in [DeviceType.ROUTER, DeviceType.SWITCH],
         action_fn=lambda f, dt: PortRole.CORE_DISTRIBUTION,
-        description="设备类型为交换机/路由器 → 核心设备"
+        description="设备类型为交换机/路由器 → 核心设备",
     ),
 ]
 
@@ -380,7 +395,7 @@ SECONDARY_RULES = [
         priority=2,
         condition_fn=lambda f, dt: f.has_port_vlan and not f.has_protocol_vlan,
         action_fn=lambda f, dt: PortRole.ACCESS_TERMINAL,
-        description="仅Port VLAN → Access口"
+        description="仅Port VLAN → Access口",
     ),
     InferenceRule(
         rule_id=RuleID.RULE_POE_LOWSPEED,
@@ -388,7 +403,7 @@ SECONDARY_RULES = [
         priority=2,
         condition_fn=lambda f, dt: f.has_poe and not f.speed_1g_plus,
         action_fn=lambda f, dt: PortRole.ACCESS_TERMINAL,
-        description="PoE+低速 → 终端接入"
+        description="PoE+低速 → 终端接入",
     ),
     InferenceRule(
         rule_id=RuleID.RULE_HIGHSPEED_BRIDGE,
@@ -396,17 +411,19 @@ SECONDARY_RULES = [
         priority=2,
         condition_fn=lambda f, dt: f.speed_10g_plus and f.is_bridge,
         action_fn=lambda f, dt: PortRole.CORE_DISTRIBUTION,
-        description="10G+桥接 → 核心设备"
+        description="10G+桥接 → 核心设备",
     ),
     InferenceRule(
         rule_id=RuleID.RULE_MULTIVLAN_BRIDGE,
         name="多VLAN桥接规则",
         priority=2,
-        condition_fn=lambda f, dt: f.is_bridge and (
-            f.has_mgmt_vlan + f.has_data_vlan + f.has_voice_vlan + f.has_storage_vlan >= 2
+        condition_fn=lambda f, dt: f.is_bridge
+        and (
+            f.has_mgmt_vlan + f.has_data_vlan + f.has_voice_vlan + f.has_storage_vlan
+            >= 2
         ),
         action_fn=lambda f, dt: PortRole.CORE_DISTRIBUTION,
-        description="多VLAN桥接 → 核心交换机"
+        description="多VLAN桥接 → 核心交换机",
     ),
     InferenceRule(
         rule_id=RuleID.RULE_MGMTIP_HIGHSPEED,
@@ -414,7 +431,7 @@ SECONDARY_RULES = [
         priority=2,
         condition_fn=lambda f, dt: f.has_management_ip and f.speed_1g_plus,
         action_fn=lambda f, dt: PortRole.INFRASTRUCTURE,
-        description="管理IP+高速 → 基础设施"
+        description="管理IP+高速 → 基础设施",
     ),
 ]
 
@@ -425,15 +442,19 @@ DEVTYPE_RULES = [
         priority=1,
         condition_fn=lambda f: f.has_poe and f.is_wlan,
         action_fn=lambda f: DeviceType.ACCESS_POINT,
-        description="PoE+无线能力 → AP"
+        description="PoE+无线能力 → AP",
     ),
     InferenceRule(
         rule_id=RuleID.RULE_DEVTYPE_POE_NOWLAN,
         name="PoE+无无线=电话",
         priority=2,
-        condition_fn=lambda f: f.has_poe and not f.is_wlan and not f.is_bridge and not f.is_router and not f.has_management_ip,
+        condition_fn=lambda f: f.has_poe
+        and not f.is_wlan
+        and not f.is_bridge
+        and not f.is_router
+        and not f.has_management_ip,
         action_fn=lambda f: DeviceType.IP_PHONE,
-        description="PoE+无无线+无网络设备特征 → IP电话"
+        description="PoE+无无线+无网络设备特征 → IP电话",
     ),
     InferenceRule(
         rule_id=RuleID.RULE_DEVTYPE_ROUTER,
@@ -441,7 +462,7 @@ DEVTYPE_RULES = [
         priority=1,
         condition_fn=lambda f: f.is_router,
         action_fn=lambda f: DeviceType.ROUTER,
-        description="路由能力 → Router"
+        description="路由能力 → Router",
     ),
     InferenceRule(
         rule_id=RuleID.RULE_DEVTYPE_BRIDGE_AGG,
@@ -449,7 +470,7 @@ DEVTYPE_RULES = [
         priority=1,
         condition_fn=lambda f: f.is_bridge and f.is_aggregated,
         action_fn=lambda f: DeviceType.SWITCH,
-        description="桥接+聚合 → Switch"
+        description="桥接+聚合 → Switch",
     ),
     InferenceRule(
         rule_id=RuleID.RULE_DEVTYPE_JUMBO,
@@ -457,7 +478,7 @@ DEVTYPE_RULES = [
         priority=1,
         condition_fn=lambda f: f.jumbo_frame and f.speed_10g_plus,
         action_fn=lambda f: DeviceType.STORAGE,
-        description="巨帧+10G → Storage"
+        description="巨帧+10G → Storage",
     ),
     InferenceRule(
         rule_id=RuleID.RULE_DEVTYPE_BRIDGE,
@@ -465,7 +486,7 @@ DEVTYPE_RULES = [
         priority=2,
         condition_fn=lambda f: f.is_bridge,
         action_fn=lambda f: DeviceType.SWITCH,
-        description="桥接能力 → Switch"
+        description="桥接能力 → Switch",
     ),
     InferenceRule(
         rule_id=RuleID.RULE_DEVTYPE_MGMTIP,
@@ -473,7 +494,7 @@ DEVTYPE_RULES = [
         priority=2,
         condition_fn=lambda f: f.has_management_ip and f.has_system_description,
         action_fn=lambda f: DeviceType.SERVER,
-        description="管理IP+系统描述 → Server"
+        description="管理IP+系统描述 → Server",
     ),
     InferenceRule(
         rule_id=RuleID.RULE_DEVTYPE_MGMTIP_TLV,
@@ -481,7 +502,7 @@ DEVTYPE_RULES = [
         priority=1,
         condition_fn=lambda f: f.has_management_ip,
         action_fn=lambda f: DeviceType.SWITCH,  # 🔥 有Management Address的基本都是网络设备
-        description="Management Address TLV → 网络设备（优先Switch）"
+        description="Management Address TLV → 网络设备（优先Switch）",
     ),
 ]
 
@@ -501,7 +522,9 @@ def infer_device_type(features: PortFeatures, device) -> DeviceType:
     return DeviceType.TERMINAL
 
 
-def run_priority_rules(features: PortFeatures, device_type: DeviceType) -> tuple[Optional[PortRole], Optional[RuleID]]:
+def run_priority_rules(
+    features: PortFeatures, device_type: DeviceType
+) -> tuple[Optional[PortRole], Optional[RuleID]]:
     """
     🔥 规则引擎：优先级规则（绝对规则）- 基于规则表
 
@@ -514,7 +537,9 @@ def run_priority_rules(features: PortFeatures, device_type: DeviceType) -> tuple
     return None, None
 
 
-def run_secondary_inference(features: PortFeatures, device_type: DeviceType) -> tuple[PortRole, RuleID]:
+def run_secondary_inference(
+    features: PortFeatures, device_type: DeviceType
+) -> tuple[PortRole, RuleID]:
     """
     🔥 二次推断：基于规则表的特征组合推断
 
@@ -557,7 +582,12 @@ STRONG_RULE_BONUS = {
 }
 
 
-def calculate_confidence(role: PortRole, device_type: DeviceType, features: PortFeatures, rule_ids: Set[RuleID]) -> int:
+def calculate_confidence(
+    role: PortRole,
+    device_type: DeviceType,
+    features: PortFeatures,
+    rule_ids: Set[RuleID],
+) -> int:
     """Calculate confidence from role quality, strong rules, and supporting TLVs."""
     confidence = BASE_CONFIDENCE_BY_ROLE.get(role, 50)
 
@@ -580,7 +610,10 @@ def calculate_confidence(role: PortRole, device_type: DeviceType, features: Port
     ]
     confidence += min(8, sum(1 for item in supporting_features if item) * 2)
 
-    if device_type in {DeviceType.UNKNOWN, DeviceType.TERMINAL} and role != PortRole.ACCESS_TERMINAL:
+    if (
+        device_type in {DeviceType.UNKNOWN, DeviceType.TERMINAL}
+        and role != PortRole.ACCESS_TERMINAL
+    ):
         confidence -= 8
 
     if role == PortRole.UNKNOWN:
@@ -626,7 +659,9 @@ def infer_port_intent(device) -> PortIntentProfile:
     confidence = calculate_confidence(final_role, device_type, features, rule_ids)
 
     # ========== 生成运维洞察和建议 ==========
-    insight, suggestion = generate_insight_and_suggestion(final_role, device_type, features, rule_ids)
+    insight, suggestion = generate_insight_and_suggestion(
+        final_role, device_type, features, rule_ids
+    )
 
     # ========== 生成TLV证据 ==========
     evidence = generate_tlv_evidence(features, device_type, rule_ids)
@@ -645,7 +680,7 @@ def infer_port_intent(device) -> PortIntentProfile:
         configuration_suggestion=suggestion,
         is_managed=features.has_management_ip,
         auto_discovery_issues=issues,
-        semantic_reasons=rule_ids  # 🔥 改为规则ID集合
+        semantic_reasons=rule_ids,  # 🔥 改为规则ID集合
     )
 
 
@@ -667,12 +702,17 @@ def map_role_to_intent(role: PortRole) -> NetworkIntent:
     return intent_map.get(role, NetworkIntent.TERMINAL_ACCESS)
 
 
-def generate_insight_and_suggestion(role: PortRole, device_type: DeviceType, features: PortFeatures, rule_ids: Set[RuleID]):
+def generate_insight_and_suggestion(
+    role: PortRole,
+    device_type: DeviceType,
+    features: PortFeatures,
+    rule_ids: Set[RuleID],
+):
     """🔥 生成运维洞察和配置建议（基于规则ID）"""
 
     # 基于角色和设备类型的组合生成洞察
     if role == PortRole.UPLINK_LAG:
-        insight = f"上联链路聚合，提供冗余和带宽扩展"
+        insight = "上联链路聚合，提供冗余和带宽扩展"
         if features.aggregation_id:
             insight += f"（聚合组ID: {features.aggregation_id}）"
         suggestion = "验证LACP配置，确保负载均衡正确，监控链路状态"
@@ -683,7 +723,7 @@ def generate_insight_and_suggestion(role: PortRole, device_type: DeviceType, fea
 
     elif role == PortRole.ACCESS_WIRELESS:
         insight = "无线AP接入端口，支持PoE供电"
-        suggestion = f"配置为Access VLAN，启用PoE+，检查AP管理VLAN，优化无线漫游"
+        suggestion = "配置为Access VLAN，启用PoE+，检查AP管理VLAN，优化无线漫游"
 
     elif role == PortRole.ACCESS_VOICE:
         insight = "IP电话接入端口，支持QoS保障"
@@ -704,7 +744,9 @@ def generate_insight_and_suggestion(role: PortRole, device_type: DeviceType, fea
     return insight, suggestion
 
 
-def generate_tlv_evidence(features: PortFeatures, device_type: DeviceType, rule_ids: Set[RuleID]) -> List[str]:
+def generate_tlv_evidence(
+    features: PortFeatures, device_type: DeviceType, rule_ids: Set[RuleID]
+) -> List[str]:
     """🔥 生成TLV证据列表（基于规则ID）"""
     evidence = []
 
@@ -754,33 +796,40 @@ def discover_issues(features: PortFeatures) -> List[str]:
 
 def format_intent_profile(profile: PortIntentProfile) -> str:
     """🔥 格式化意图配置文件为可读文本（v3.0优化版）"""
-    lines = [
-        f"端口角色: {profile.role.value}",
-        f"设备类型: {profile.device_type.value}",
-        f"网络意图: {profile.intent.value if profile.intent else '未知'}",
-        f"置信度: {profile.confidence}%",
-        f"受管设备: {'是' if profile.is_managed else '否'}",
-        "",
-        "🔍 TLV证据:"
-    ] + [f"  • {evidence}" for evidence in profile.tlv_evidence] + [
-        "",
-        "💡 运维洞察:",
-        f"  {profile.operational_insight}",
-        "",
-        "📋 配置建议:",
-        f"  {profile.configuration_suggestion}",
-    ]
+    lines = (
+        [
+            f"端口角色: {profile.role.value}",
+            f"设备类型: {profile.device_type.value}",
+            f"网络意图: {profile.intent.value if profile.intent else '未知'}",
+            f"置信度: {profile.confidence}%",
+            f"受管设备: {'是' if profile.is_managed else '否'}",
+            "",
+            "🔍 TLV证据:",
+        ]
+        + [f"  • {evidence}" for evidence in profile.tlv_evidence]
+        + [
+            "",
+            "💡 运维洞察:",
+            f"  {profile.operational_insight}",
+            "",
+            "📋 配置建议:",
+            f"  {profile.configuration_suggestion}",
+        ]
+    )
 
     if profile.semantic_reasons:
-        lines.extend([
-            "",
-            "🧠 触发规则 (RuleID):"
-        ] + [f"  • {rule_id.value}: {rule_id.description}" for rule_id in profile.semantic_reasons])
+        lines.extend(
+            ["", "🧠 触发规则 (RuleID):"]
+            + [
+                f"  • {rule_id.value}: {rule_id.description}"
+                for rule_id in profile.semantic_reasons
+            ]
+        )
 
     if profile.auto_discovery_issues:
-        lines.extend([
-            "",
-            "⚠️ 发现问题:"
-        ] + [f"  • {issue}" for issue in profile.auto_discovery_issues])
+        lines.extend(
+            ["", "⚠️ 发现问题:"]
+            + [f"  • {issue}" for issue in profile.auto_discovery_issues]
+        )
 
     return "\n".join(lines)

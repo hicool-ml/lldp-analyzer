@@ -6,6 +6,7 @@ Tests cover:
 2. stop_capture flush behavior
 3. Concurrent access patterns
 """
+
 import pytest
 import time
 import threading
@@ -26,7 +27,9 @@ class TestThreadSafety:
             for i in range(count):
                 device = LLDPDevice()
                 device.chassis_id = f"thread_{thread_id}_device_{i}"
-                result = CaptureResult(device=device, timestamp=time.time(), interface="test")
+                result = CaptureResult(
+                    device=device, timestamp=time.time(), interface="test"
+                )
                 capture.device_queue.put(result)
 
         # Start multiple threads
@@ -52,7 +55,9 @@ class TestThreadSafety:
         for i in range(3):
             device = LLDPDevice()
             device.chassis_id = f"device_{i}"
-            result = CaptureResult(device=device, timestamp=time.time(), interface="test")
+            result = CaptureResult(
+                device=device, timestamp=time.time(), interface="test"
+            )
             capture.device_queue.put(result)
 
         # Get devices
@@ -77,7 +82,9 @@ class TestThreadSafety:
         for i in range(3):
             device = LLDPDevice()
             device.chassis_id = f"device_{i}"
-            result = CaptureResult(device=device, timestamp=time.time(), interface="test")
+            result = CaptureResult(
+                device=device, timestamp=time.time(), interface="test"
+            )
             capture.device_queue.put(result)
 
         # Stop capture
@@ -94,7 +101,9 @@ class TestThreadSafety:
             for i in range(20):
                 device = LLDPDevice()
                 device.chassis_id = f"prod_{i}"
-                result = CaptureResult(device=device, timestamp=time.time(), interface="test")
+                result = CaptureResult(
+                    device=device, timestamp=time.time(), interface="test"
+                )
                 capture.device_queue.put(result)
                 time.sleep(0.01)
 

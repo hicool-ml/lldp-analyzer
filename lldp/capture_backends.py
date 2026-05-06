@@ -7,6 +7,7 @@ Provides two backends:
 
 Backends implement a small common API used by capture modules.
 """
+
 import time
 import logging
 import platform
@@ -17,6 +18,7 @@ log = logging.getLogger("lldp.capture_backends")
 # Optional imports
 try:
     import pcapy
+
     HAS_PCAPY = True
 except Exception:
     pcapy = None
@@ -24,6 +26,7 @@ except Exception:
 
 try:
     import dpkt
+
     HAS_DPKT = True
 except Exception:
     dpkt = None
@@ -57,7 +60,13 @@ class BaseBackend:
 class PCAPBackend(BaseBackend):
     """PCAP backend using pcapy (pcapy-ng) + dpkt for parsing"""
 
-    def __init__(self, interface: str, snaplen: int = 65535, promisc: bool = True, timeout_ms: int = 1000):
+    def __init__(
+        self,
+        interface: str,
+        snaplen: int = 65535,
+        promisc: bool = True,
+        timeout_ms: int = 1000,
+    ):
         if not HAS_PCAPY:
             raise RuntimeError("pcapy is not installed")
         if not HAS_DPKT:
@@ -72,9 +81,16 @@ class PCAPBackend(BaseBackend):
 
     def open(self, bpf_filter: str = "") -> None:
         # open_live(iface, snaplen, promisc, read_timeout_ms)
-        self.pcap = pcapy.open_live(self.interface, self.snaplen, int(self.promisc), int(self.timeout_ms))
-        log.info("✅ Opened pcap on %s, snaplen=%d, promisc=%d, timeout_ms=%d",
-                 self.interface, self.snaplen, self.promisc, self.timeout_ms)
+        self.pcap = pcapy.open_live(
+            self.interface, self.snaplen, int(self.promisc), int(self.timeout_ms)
+        )
+        log.info(
+            "✅ Opened pcap on %s, snaplen=%d, promisc=%d, timeout_ms=%d",
+            self.interface,
+            self.snaplen,
+            self.promisc,
+            self.timeout_ms,
+        )
         if bpf_filter:
             try:
                 self.pcap.setfilter(bpf_filter)
@@ -103,9 +119,9 @@ class PCAPBackend(BaseBackend):
             # 🚀 性能优化：快速字节级过滤，避免频繁构造dpkt对象
             # 检查EtherType (offset 12-13): LLDP=0x88cc, CDP=0x2000
             ethertype = payload[12:14]
-            if ethertype not in (b'\x88\xcc', b'\x20\x00'):
+            if ethertype not in (b"\x88\xcc", b"\x20\x00"):
                 # 检查CDP目的MAC (offset 0-5): 01:00:0c:cc:cc:cc
-                if payload[0:6] != b'\x01\x00\x0c\xcc\xcc\xcc':
+                if payload[0:6] != b"\x01\x00\x0c\xcc\xcc\xcc":
                     continue  # 非目标流量，快速跳过
 
             try:
@@ -153,7 +169,9 @@ class AFPacketBackend(BaseBackend):
 
     def open(self, bpf_filter: str = "") -> None:
         # create raw AF_PACKET socket
-        self.sock = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0003))
+        self.sock = socket.socket(
+            socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0003)
+        )
         try:
             self.sock.bind((self.interface, 0))
             log.info("✅ Opened AF_PACKET socket on %s", self.interface)
@@ -164,7 +182,9 @@ class AFPacketBackend(BaseBackend):
                 "Run as root OR use: sudo setcap cap_net_raw+ep $(which python)"
             )
         except Exception as e:
-            log.exception("Failed to bind AF_PACKET socket to interface %s", self.interface)
+            log.exception(
+                "Failed to bind AF_PACKET socket to interface %s", self.interface
+            )
             raise RuntimeError(
                 f"Failed to bind AF_PACKET socket to {self.interface}: {e}\n"
                 f"Hint: Ensure you have CAP_NET_RAW capability or run with sudo.\n"
@@ -192,9 +212,9 @@ class AFPacketBackend(BaseBackend):
             # 🚀 性能优化：快速字节级过滤，避免频繁构造dpkt对象
             # 检查EtherType (offset 12-13): LLDP=0x88cc, CDP=0x2000
             ethertype = pkt[12:14]
-            if ethertype not in (b'\x88\xcc', b'\x20\x00'):
+            if ethertype not in (b"\x88\xcc", b"\x20\x00"):
                 # 检查CDP目的MAC (offset 0-5): 01:00:0c:cc:cc:cc
-                if pkt[0:6] != b'\x01\x00\x0c\xcc\xcc\xcc':
+                if pkt[0:6] != b"\x01\x00\x0c\xcc\xcc\xcc":
                     continue  # 非目标流量，快速跳过
 
             try:
@@ -241,6 +261,8 @@ def choose_backend(interface: str) -> Optional[BaseBackend]:
             log.exception("Failed to initialize AFPacketBackend")
 
     # No lightweight backend available
-    log.warning("⚠️  No lightweight backend available (pcapy/AF_PACKET), will use Scapy fallback")
+    log.warning(
+        "⚠️  No lightweight backend available (pcapy/AF_PACKET), will use Scapy fallback"
+    )
 
     return None

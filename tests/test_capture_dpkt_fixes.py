@@ -26,7 +26,7 @@ class TestScapyRequirement:
 
     def test_requires_scapy_in_init(self):
         """HybridCapture can be constructed without Scapy for dpkt/raw backends."""
-        with patch('lldp.capture_dpkt.HAS_SCAPY', False):
+        with patch("lldp.capture_dpkt.HAS_SCAPY", False):
             capture = HybridCapture()
             assert capture is not None
 
@@ -35,9 +35,11 @@ class TestScapyRequirement:
         capture = HybridCapture()
         interface = "eth0"
 
-        with patch('lldp.capture_dpkt.HAS_SCAPY', False), \
-             patch('lldp.capture_dpkt.HAS_RAW_SOCKET', False), \
-             patch('lldp.capture_dpkt.choose_backend', return_value=None):
+        with (
+            patch("lldp.capture_dpkt.HAS_SCAPY", False),
+            patch("lldp.capture_dpkt.HAS_RAW_SOCKET", False),
+            patch("lldp.capture_dpkt.choose_backend", return_value=None),
+        ):
             with pytest.raises(RuntimeError) as exc_info:
                 capture.start_capture(interface, duration=1)
 
@@ -50,8 +52,8 @@ class TestScapyRequirement:
 
         source = inspect.getsource(capture_dpkt)
 
-        assert 'def _scapy_worker' in source
-        assert 'sniff(' in source
+        assert "def _scapy_worker" in source
+        assert "sniff(" in source
 
 
 class TestLoggerUsage:
@@ -60,7 +62,8 @@ class TestLoggerUsage:
     def test_logger_instance_exists(self):
         """验证 logger 实例存在"""
         from lldp import capture_dpkt
-        assert hasattr(capture_dpkt, 'log'), "应该有 log 实例"
+
+        assert hasattr(capture_dpkt, "log"), "应该有 log 实例"
         assert capture_dpkt.log.name == "lldp.capture_dpkt"
 
     def test_no_print_in_capture_dpkt(self):
@@ -71,7 +74,7 @@ class TestLoggerUsage:
         source = inspect.getsource(capture_dpkt)
 
         # 统计 print 语句数量
-        print_count = source.count('print(')
+        print_count = source.count("print(")
         assert print_count == 0, f"发现 {print_count} 个 print 语句，应该使用 logger"
 
 
@@ -82,15 +85,16 @@ class TestCallbackThreadPool:
         """验证线程池正确初始化"""
         capture = HybridCapture()
 
-        assert hasattr(capture, '_callback_pool'), "应该有 _callback_pool 属性"
-        assert isinstance(capture._callback_pool, ThreadPoolExecutor), \
-            "_callback_pool 应该是 ThreadPoolExecutor 实例"
+        assert hasattr(capture, "_callback_pool"), "应该有 _callback_pool 属性"
+        assert isinstance(
+            capture._callback_pool, ThreadPoolExecutor
+        ), "_callback_pool 应该是 ThreadPoolExecutor 实例"
 
     def test_safe_callback_exists(self):
         """验证 _safe_callback 方法存在"""
         capture = HybridCapture()
 
-        assert hasattr(capture, '_safe_callback'), "应该有 _safe_callback 方法"
+        assert hasattr(capture, "_safe_callback"), "应该有 _safe_callback 方法"
         assert callable(capture._safe_callback), "_safe_callback 应该可调用"
 
     def test_callback_exception_handling(self):
@@ -124,7 +128,7 @@ class TestExceptionHandling:
         source = inspect.getsource(capture_dpkt)
 
         # 检查是否使用 log.exception
-        assert 'log.exception' in source, "应该使用 log.exception 记录异常"
+        assert "log.exception" in source, "应该使用 log.exception 记录异常"
 
 
 class TestStopCaptureTimeout:
@@ -133,15 +137,16 @@ class TestStopCaptureTimeout:
     def test_stop_capture_increased_timeout(self):
         """stop_capture should not block the UI waiting for daemon capture threads."""
         import inspect
+
         source = inspect.getsource(HybridCapture.stop_capture)
 
-        assert 'join(' not in source
+        assert "join(" not in source
 
     def test_shutdown_method_exists(self):
         """验证 shutdown 方法存在"""
         capture = HybridCapture()
 
-        assert hasattr(capture, 'shutdown'), "应该有 shutdown 方法"
+        assert hasattr(capture, "shutdown"), "应该有 shutdown 方法"
         assert callable(capture.shutdown), "shutdown 应该可调用"
 
 
@@ -151,8 +156,9 @@ class TestNoDuplicateNonlocal:
     def test_no_duplicate_nonlocal(self):
         """HybridCapture no longer uses nested nonlocal packet counters."""
         import inspect
+
         source = inspect.getsource(HybridCapture)
-        assert 'nonlocal' not in source
+        assert "nonlocal" not in source
 
 
 class TestCaptureResultTyping:
@@ -165,11 +171,11 @@ class TestCaptureResultTyping:
 
         # 检查字段是否存在
         field_names = [f.name for f in fields(CaptureResult)]
-        assert 'device' in field_names
-        assert 'timestamp' in field_names
-        assert 'interface' in field_names
+        assert "device" in field_names
+        assert "timestamp" in field_names
+        assert "interface" in field_names
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # 运行测试
-    pytest.main([__file__, '-v', '--tb=short'])
+    pytest.main([__file__, "-v", "--tb=short"])

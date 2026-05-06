@@ -17,5 +17,6 @@ __all__ = [
     "LLDPCapture",
     "LLDPCaptureListener",
     "LLDPChassisID",
+    "LLDPParser",
     "LLDPPortID",
 ]

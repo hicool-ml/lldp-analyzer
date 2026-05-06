@@ -28,7 +28,7 @@ class TestCallbackFix:
         capture = LLDPCapture(fusion_interval=0.1, min_packet_count=2)
 
         # 创建 mock callback
-        callback = Mock()
+        Mock()
 
         # 模拟设备缓存和融合
         device = Mock()
@@ -52,8 +52,10 @@ class TestCallbackFix:
         capture = LLDPCapture()
 
         # 验证 callback 线程池存在
-        assert hasattr(capture, '_callback_pool'), "应该有回调线程池"
-        assert isinstance(capture._callback_pool, ThreadPoolExecutor), "应该是 ThreadPoolExecutor"
+        assert hasattr(capture, "_callback_pool"), "应该有回调线程池"
+        assert isinstance(
+            capture._callback_pool, ThreadPoolExecutor
+        ), "应该是 ThreadPoolExecutor"
 
 
 class TestNonlocalDeclaration:
@@ -70,16 +72,16 @@ class TestNonlocalDeclaration:
 
         # 验证 nonlocal 声明在 packet_handler 函数开头
         # 查找 packet_handler 函数定义后的几行
-        lines = source.split('\n')
+        lines = source.split("\n")
         found_packet_handler = False
         found_nonlocal = False
 
         for i, line in enumerate(lines):
-            if 'def packet_handler' in line:
+            if "def packet_handler" in line:
                 found_packet_handler = True
                 # 检查接下来的3行内是否有 nonlocal 声明
-                for j in range(i+1, min(i+4, len(lines))):
-                    if 'nonlocal packet_count, device_found' in lines[j]:
+                for j in range(i + 1, min(i + 4, len(lines))):
+                    if "nonlocal packet_count, device_found" in lines[j]:
                         found_nonlocal = True
                         break
                 break
@@ -94,13 +96,15 @@ class TestLoggerUsage:
     def test_logger_instance_exists(self):
         """验证 logger 实例存在"""
         from lldp import capture
-        assert hasattr(capture, 'log'), "应该有 log 实例"
+
+        assert hasattr(capture, "log"), "应该有 log 实例"
         assert isinstance(capture.log, logging.Logger), "log 应该是 Logger 实例"
 
     def test_max_hex_display_defined(self):
         """验证 MAX_HEX_DISPLAY 常量定义"""
         from lldp import capture
-        assert hasattr(capture, 'MAX_HEX_DISPLAY'), "应该定义 MAX_HEX_DISPLAY"
+
+        assert hasattr(capture, "MAX_HEX_DISPLAY"), "应该定义 MAX_HEX_DISPLAY"
         assert capture.MAX_HEX_DISPLAY == 200, "MAX_HEX_DISPLAY 应该是 200"
 
     def test_no_print_in_capture_module(self):
@@ -112,13 +116,13 @@ class TestLoggerUsage:
 
         # 统计 print 语句数量（排除注释）
         print_count = 0
-        for line in source.split('\n'):
+        for line in source.split("\n"):
             stripped = line.strip()
             # 跳过注释和空行
-            if not stripped or stripped.startswith('#'):
+            if not stripped or stripped.startswith("#"):
                 continue
             # 检查是否有 print 语句
-            if 'print(' in stripped:
+            if "print(" in stripped:
                 print_count += 1
 
         # 允许少量 print（例如错误处理），但应该很少
@@ -136,8 +140,9 @@ class TestExceptionHandling:
         source = inspect.getsource(capture)
 
         # 检查是否使用 log.exception
-        assert 'log.exception' in source or 'logger.exception' in source, \
-            "应该使用 log.exception 记录异常"
+        assert (
+            "log.exception" in source or "logger.exception" in source
+        ), "应该使用 log.exception 记录异常"
 
     def test_callback_exception_handling(self):
         """验证 callback 异常不会中断捕获"""
@@ -159,29 +164,32 @@ class TestExceptionHandling:
 class TestBPFFilterCompatibility:
     """测试5：BPF filter 兼容性"""
 
-    @patch('scapy.all.AsyncSniffer')
+    @patch("scapy.all.AsyncSniffer")
     def test_bpf_filter_fallback(self, mock_sniffer_class):
         """验证 BPF filter 失败时的 fallback 机制"""
         # 模拟 AsyncSniffer 第一次创建失败（BPF 不支持）
         mock_sniffer_instance = Mock()
         mock_sniffer_class.side_effect = [
             Exception("BPF filter not supported"),  # 第一次失败
-            mock_sniffer_instance  # 第二次成功（fallback）
+            mock_sniffer_instance,  # 第二次成功（fallback）
         ]
 
         # 由于这是在 _capture_worker 中测试，需要模拟整个捕获流程
         # 这里简化测试，只验证逻辑存在
         from lldp import capture
+
         source = capture.__file__
 
-        with open(source, 'r', encoding='utf-8') as f:
+        with open(source, "r", encoding="utf-8") as f:
             content = f.read()
 
         # 验证有 fallback 逻辑
-        assert 'except Exception as bpf_error' in content or 'except Exception' in content, \
-            "应该有 BPF filter 的异常处理"
-        assert 'Falling back' in content or 'fallback' in content.lower(), \
-            "应该有 fallback 机制"
+        assert (
+            "except Exception as bpf_error" in content or "except Exception" in content
+        ), "应该有 BPF filter 的异常处理"
+        assert (
+            "Falling back" in content or "fallback" in content.lower()
+        ), "应该有 fallback 机制"
 
 
 class TestCallbackThreadPool:
@@ -191,9 +199,10 @@ class TestCallbackThreadPool:
         """验证线程池正确初始化"""
         capture = LLDPCapture()
 
-        assert hasattr(capture, '_callback_pool'), "应该有 _callback_pool 属性"
-        assert isinstance(capture._callback_pool, ThreadPoolExecutor), \
-            "_callback_pool 应该是 ThreadPoolExecutor 实例"
+        assert hasattr(capture, "_callback_pool"), "应该有 _callback_pool 属性"
+        assert isinstance(
+            capture._callback_pool, ThreadPoolExecutor
+        ), "_callback_pool 应该是 ThreadPoolExecutor 实例"
 
     def test_callback_executed_async(self):
         """验证 callback 异步执行，不阻塞主线程"""
@@ -222,7 +231,7 @@ class TestCallbackThreadPool:
         capture = LLDPCapture()
 
         # 验证 shutdown 方法存在
-        assert hasattr(capture, 'shutdown'), "应该有 shutdown 方法"
+        assert hasattr(capture, "shutdown"), "应该有 shutdown 方法"
 
         # 调用 shutdown
         capture.shutdown()
@@ -250,7 +259,7 @@ class TestDeviceCacheEntry:
             packet_count=2,
             interface="eth0",
             max_fusion_age=5.0,
-            min_packet_count=3
+            min_packet_count=3,
         )
 
         # 使用自定义参数测试
@@ -260,8 +269,9 @@ class TestDeviceCacheEntry:
         # 等待时间窗口
         time.sleep(0.2)
         # 现在应该触发融合（时间窗口）
-        assert entry.should_fuse(max_age=0.15, min_packets=3), \
-            "时间窗口到期应该触发融合"
+        assert entry.should_fuse(
+            max_age=0.15, min_packets=3
+        ), "时间窗口到期应该触发融合"
 
     def test_merge_with_returns_device(self):
         """验证 merge_with 返回设备对象"""
@@ -270,7 +280,7 @@ class TestDeviceCacheEntry:
             first_seen=time.time(),
             last_seen=time.time(),
             packet_count=1,
-            interface="eth0"
+            interface="eth0",
         )
 
         new_device = Mock()
@@ -286,13 +296,13 @@ class TestCaptureTimeout:
     def test_stop_capture_increased_timeout(self):
         """验证 stop_capture 的超时时间增加到5秒"""
         import inspect
+
         source = inspect.getsource(LLDPCapture.stop_capture)
 
         # 验证超时时间从2秒改为5秒
-        assert 'join(timeout=5)' in source, \
-            "stop_capture 的超时时间应该是5秒"
+        assert "join(timeout=5)" in source, "stop_capture 的超时时间应该是5秒"
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # 运行测试
-    pytest.main([__file__, '-v', '--tb=short'])
+    pytest.main([__file__, "-v", "--tb=short"])

@@ -5,6 +5,7 @@ This adapter bridges the API differences between:
 - UI expects: LLDPCaptureListener with start/stop methods
 - Copilot provides: HybridCapture with start_capture/stop_capture methods
 """
+
 import logging
 from typing import Callable, Optional
 from .capture_dpkt import HybridCapture
@@ -33,7 +34,7 @@ class LLDPCaptureListener:
 
         # 🔥 关键修复：禁用Copilot版本的线程池，确保回调直接执行
         # UI使用QueuedConnection来确保线程安全，不需要额外的线程池
-        if hasattr(self._hybrid_capture, '_callback_pool'):
+        if hasattr(self._hybrid_capture, "_callback_pool"):
             # 保存原始线程池但禁用它
             self._original_callback_pool = self._hybrid_capture._callback_pool
             self._hybrid_capture._callback_pool = None
@@ -43,9 +44,13 @@ class LLDPCaptureListener:
         """Property to provide access to internal capture for compatibility"""
         return self._hybrid_capture
 
-    def start(self, interface, duration: int = 60,
-             on_device_discovered: Optional[Callable] = None,
-             on_capture_complete: Optional[Callable] = None):
+    def start(
+        self,
+        interface,
+        duration: int = 60,
+        on_device_discovered: Optional[Callable] = None,
+        on_capture_complete: Optional[Callable] = None,
+    ):
         """
         Start LLDP/CDP capture (UI-compatible interface)
 
@@ -90,15 +95,13 @@ class LLDPCaptureListener:
 
             # Start capture using HybridCapture
             self._hybrid_capture.start_capture(
-                interface=interface,
-                duration=duration,
-                callback=device_callback
+                interface=interface, duration=duration, callback=device_callback
             )
 
             log.warning("[ADAPTER] HybridCapture.start_capture() returned")
 
             # Set thread attribute for UI monitoring
-            if hasattr(self._hybrid_capture, 'capture_thread'):
+            if hasattr(self._hybrid_capture, "capture_thread"):
                 self.thread = self._hybrid_capture.capture_thread
                 log.warning(f"[ADAPTER] Capture thread: {self.thread}")
 
@@ -124,11 +127,11 @@ class LLDPCaptureListener:
                     # Get discovered devices
                     devices = self._hybrid_capture.get_discovered_devices()
                     self._on_capture_complete(devices)
-                except Exception as e:
+                except Exception:
                     log.exception("Capture complete callback raised exception")
 
             # Store thread reference for UI
-            if hasattr(self._hybrid_capture, 'capture_thread'):
+            if hasattr(self._hybrid_capture, "capture_thread"):
                 self.thread = self._hybrid_capture.capture_thread
 
             log.info("Capture stopped successfully")

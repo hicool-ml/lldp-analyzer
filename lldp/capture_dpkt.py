@@ -8,6 +8,7 @@ This module provides a capture engine that prefer lightweight backends:
 
 Public API remains compatible with previous LLDPCapture, so UI code does not need to change.
 """
+
 import logging
 import queue
 import time
@@ -20,6 +21,7 @@ log = logging.getLogger("lldp.capture_dpkt")
 # optional dependencies
 try:
     import dpkt
+
     HAS_DPKT = True
 except Exception:
     dpkt = None
@@ -27,6 +29,7 @@ except Exception:
 
 try:
     import pcapy
+
     HAS_PCAPY = True
 except Exception:
     pcapy = None
@@ -34,6 +37,7 @@ except Exception:
 
 try:
     from scapy.all import sniff
+
     HAS_SCAPY = True
 except Exception:
     sniff = None
@@ -47,6 +51,7 @@ from .capture_utils import describe_interface, normalize_interface_name
 #  新增：无Scapy的Raw Socket引擎
 try:
     from .raw_socket_capture import create_capture_engine
+
     HAS_RAW_SOCKET = True
 except Exception:
     HAS_RAW_SOCKET = False
@@ -89,7 +94,11 @@ def merge_devices(base, new):
                     seen.add(marker)
             continue
 
-        if is_dataclass(current) and is_dataclass(value) and type(current) is type(value):
+        if (
+            is_dataclass(current)
+            and is_dataclass(value)
+            and type(current) is type(value)
+        ):
             merge_devices(current, value)
             continue
 
@@ -124,18 +133,20 @@ class HybridCapture:
 
         #  运行指标（可观测性）
         self.metrics = {
-            "rx_packets": 0,        # 接收的总包数
-            "parsed": 0,            # 成功解析的设备数
-            "parse_errors": 0,      # 解析失败数
-            "callbacks": 0,         # 回调触发次数
-            "filtered": 0           # 快速过滤跳过的包数
+            "rx_packets": 0,  # 接收的总包数
+            "parsed": 0,  # 成功解析的设备数
+            "parse_errors": 0,  # 解析失败数
+            "callbacks": 0,  # 回调触发次数
+            "filtered": 0,  # 快速过滤跳过的包数
         }
 
         # lightweight thread pool replacement using concurrent.futures if available
         try:
             from concurrent.futures import ThreadPoolExecutor
 
-            self._callback_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="lldp_dpkt_callback")
+            self._callback_pool = ThreadPoolExecutor(
+                max_workers=2, thread_name_prefix="lldp_dpkt_callback"
+            )
         except Exception:
             self._callback_pool = None
 
@@ -179,7 +190,9 @@ class HybridCapture:
         except Exception as e:
             log.exception(f"Raw Socket超时工作线程异常: {e}")
 
-    def start_capture(self, interface, duration: int = 60, callback: Optional[Callable] = None):
+    def start_capture(
+        self, interface, duration: int = 60, callback: Optional[Callable] = None
+    ):
         if self.is_capturing:
             raise RuntimeError("Capture already in progress")
 
@@ -205,9 +218,7 @@ class HybridCapture:
 
                 # 创建Raw Socket引擎
                 self.raw_socket_engine = create_capture_engine(
-                    self._active_interface_name,
-                    self._raw_socket_callback,
-                    promisc=True
+                    self._active_interface_name, self._raw_socket_callback, promisc=True
                 )
 
                 # 启动捕获
@@ -217,7 +228,7 @@ class HybridCapture:
                 self.capture_thread = threading.Thread(
                     target=self._raw_socket_timeout_worker,
                     args=(duration,),
-                    daemon=True
+                    daemon=True,
                 )
                 self.capture_thread.start()
 
@@ -235,11 +246,17 @@ class HybridCapture:
             try:
                 log.warning(f"[CAPTURE] Backend created: {backend.__class__.__name__}")
                 self.backend = backend
-                self.backend.open(bpf_filter="ether proto 0x88cc or ether host 01:00:0c:cc:cc:cc")
-                log.warning(f"[CAPTURE] Using Lightweight Backend: {self._active_interface_desc} ({self._active_interface_name})")
+                self.backend.open(
+                    bpf_filter="ether proto 0x88cc or ether host 01:00:0c:cc:cc:cc"
+                )
+                log.warning(
+                    f"[CAPTURE] Using Lightweight Backend: {self._active_interface_desc} ({self._active_interface_name})"
+                )
 
                 self.is_capturing = True
-                self.capture_thread = threading.Thread(target=self._backend_worker, args=(duration,), daemon=True)
+                self.capture_thread = threading.Thread(
+                    target=self._backend_worker, args=(duration,), daemon=True
+                )
                 self.capture_thread.start()
                 log.warning("[CAPTURE] Lightweight Backend started successfully")
                 return
@@ -250,11 +267,17 @@ class HybridCapture:
 
         #  最后的fallback：Scapy
         if HAS_SCAPY:
-            log.warning(f"[CAPTURE] [3/3] Using Scapy Fallback: {self._active_interface_desc} ({self._active_interface_name})")
+            log.warning(
+                f"[CAPTURE] [3/3] Using Scapy Fallback: {self._active_interface_desc} ({self._active_interface_name})"
+            )
             log.warning("[CAPTURE] Scapy mode has lower performance, Npcap recommended")
             log.warning("[CAPTURE] Starting Scapy worker thread...")
             self.is_capturing = True
-            self.capture_thread = threading.Thread(target=self._scapy_worker, args=(interface, duration, callback), daemon=True)
+            self.capture_thread = threading.Thread(
+                target=self._scapy_worker,
+                args=(interface, duration, callback),
+                daemon=True,
+            )
             self.capture_thread.start()
             log.warning("[CAPTURE] Scapy worker thread started")
             return
@@ -316,14 +339,21 @@ class HybridCapture:
 
         try:
             # LLDP Ethertype 0x88cc
-            if getattr(eth, "type", None) == 0x88cc:
+            if getattr(eth, "type", None) == 0x88CC:
                 payload = bytes(eth.data)
                 device = self.lldp_parser.parse_packet(payload)
                 protocol = "LLDP"
             # CDP: detect by destination MAC 01:00:0c:cc:cc:cc (Cisco) and eth.type 0x2000
-            elif getattr(eth, "dst", None) == b"\x01\x00\x0c\xcc\xcc\xcc" or getattr(eth, "type", None) == 0x2000:
+            elif (
+                getattr(eth, "dst", None) == b"\x01\x00\x0c\xcc\xcc\xcc"
+                or getattr(eth, "type", None) == 0x2000
+            ):
                 payload = bytes(eth.data)
-                device = self.cdp_parser.parse_packet(payload) if hasattr(self.cdp_parser, 'parse_packet') else None
+                device = (
+                    self.cdp_parser.parse_packet(payload)
+                    if hasattr(self.cdp_parser, "parse_packet")
+                    else None
+                )
                 protocol = "CDP"
             else:
                 self.metrics["filtered"] += 1
@@ -332,20 +362,28 @@ class HybridCapture:
             if device and device.is_valid():
                 self.metrics["parsed"] += 1
                 device = self._merge_or_cache_device(device)
-                device.capture_interface = getattr(self.backend, 'interface', self._active_interface_name)
+                device.capture_interface = getattr(
+                    self.backend, "interface", self._active_interface_name
+                )
                 # 🔧 避免覆盖解析器已设置的protocol字段
-                if not getattr(device, 'protocol', None):
+                if not getattr(device, "protocol", None):
                     device.protocol = protocol
-                result = CaptureResult(device=device, timestamp=time.time(), interface=device.capture_interface)
+                result = CaptureResult(
+                    device=device,
+                    timestamp=time.time(),
+                    interface=device.capture_interface,
+                )
                 # enqueue to thread-safe queue
                 self.device_queue.put(result)
 
                 # async callback
                 if self._current_callback:
                     self.metrics["callbacks"] += 1
-                    if hasattr(self._callback_pool, 'submit'):
+                    if hasattr(self._callback_pool, "submit"):
                         try:
-                            self._callback_pool.submit(self._safe_callback, self._current_callback, device)
+                            self._callback_pool.submit(
+                                self._safe_callback, self._current_callback, device
+                            )
                         except Exception:
                             log.exception("Failed to submit callback")
                     else:
@@ -377,7 +415,6 @@ class HybridCapture:
     def _scapy_worker(self, interface, duration: int, callback: Optional[Callable]):
         # minimal scapy fallback (keeps compatibility)
         from scapy.all import sniff, Ether
-        import sys
 
         iface_name = normalize_interface_name(interface)
         iface_desc = describe_interface(interface)
@@ -396,15 +433,21 @@ class HybridCapture:
 
                 # 每100个包打印一次进度
                 if total_packets[0] % 100 == 0:
-                    log.warning(f"[SCAPY] Captured {total_packets[0]} packets so far...")
+                    log.warning(
+                        f"[SCAPY] Captured {total_packets[0]} packets so far..."
+                    )
 
                 # reuse existing parser methods that accept scapy packets
                 device = None
                 if pkt.haslayer(Ether) and pkt[Ether].type == 0x88CC:
-                    log.warning(f"[SCAPY] Received LLDP packet #{self.metrics['rx_packets']}")
+                    log.warning(
+                        f"[SCAPY] Received LLDP packet #{self.metrics['rx_packets']}"
+                    )
                     device = self.lldp_parser.parse_scapy_packet(pkt)
                 elif pkt.haslayer(Ether) and pkt[Ether].dst == "01:00:0c:cc:cc:cc":
-                    log.warning(f"[SCAPY] Received CDP packet #{self.metrics['rx_packets']}")
+                    log.warning(
+                        f"[SCAPY] Received CDP packet #{self.metrics['rx_packets']}"
+                    )
                     device = self.cdp_parser.parse_scapy_packet(pkt)
                 else:
                     self.metrics["filtered"] += 1
@@ -412,23 +455,31 @@ class HybridCapture:
 
                 if device and device.is_valid():
                     self.metrics["parsed"] += 1
-                    log.warning(f"[SCAPY] Parsed successfully #{self.metrics['parsed']}: {device.system_name}")
+                    log.warning(
+                        f"[SCAPY] Parsed successfully #{self.metrics['parsed']}: {device.system_name}"
+                    )
                     device = self._merge_or_cache_device(device)
                     device.capture_interface = iface_desc
                     #  修复：使用解析器设置的协议，不要覆盖
                     # 如果解析器已经设置了protocol，使用它；否则基于设备类型推断
-                    if hasattr(device, 'protocol') and device.protocol:
+                    if hasattr(device, "protocol") and device.protocol:
                         # 使用解析器设置的协议标识
                         pass  # 保持原有的protocol设置
                     else:
                         # 根据设备类型推断协议
-                        device.protocol = 'LLDP' if hasattr(device, 'chassis_id') else 'CDP'
-                    res = CaptureResult(device=device, timestamp=time.time(), interface=iface_desc)
+                        device.protocol = (
+                            "LLDP" if hasattr(device, "chassis_id") else "CDP"
+                        )
+                    res = CaptureResult(
+                        device=device, timestamp=time.time(), interface=iface_desc
+                    )
                     self.device_queue.put(res)  # Thread-safe enqueue
                     if callback:
                         self.metrics["callbacks"] += 1
-                        if hasattr(self._callback_pool, 'submit'):
-                            self._callback_pool.submit(self._safe_callback, callback, device)
+                        if hasattr(self._callback_pool, "submit"):
+                            self._callback_pool.submit(
+                                self._safe_callback, callback, device
+                            )
                         else:
                             try:
                                 callback(device)
@@ -443,16 +494,21 @@ class HybridCapture:
 
         # start sniffing
         try:
-            log.warning(f"[SCAPY] Starting packet capture...")
+            log.warning("[SCAPY] Starting packet capture...")
             sniff(iface=iface_name, prn=pkt_handler, timeout=duration, store=False)
-            log.warning(f"[SCAPY] Capture completed")
-            log.warning(f"[SCAPY] Stats: total={total_packets[0]}, LLDP/CDP={self.metrics['rx_packets']}, parsed={self.metrics['parsed']}")
+            log.warning("[SCAPY] Capture completed")
+            log.warning(
+                f"[SCAPY] Stats: total={total_packets[0]}, LLDP/CDP={self.metrics['rx_packets']}, parsed={self.metrics['parsed']}"
+            )
         except Exception as e:
             error_str = str(e)
             log.warning(f"[SCAPY] Capture failed: {e}")
 
             # 特殊处理：winpcap/pcap驱动未安装
-            if "winpcap is not installed" in error_str.lower() or "pcap" in error_str.lower():
+            if (
+                "winpcap is not installed" in error_str.lower()
+                or "pcap" in error_str.lower()
+            ):
                 log.error("=" * 70)
                 log.error("CRITICAL ERROR: Network capture driver not installed!")
                 log.error("=" * 70)
@@ -477,12 +533,12 @@ class HybridCapture:
                 log.error("  - No pcap driver = NO packet capture")
                 log.error("=" * 70)
             else:
-                log.warning(f"[SCAPY] Possible reasons:")
-                log.warning(f"[SCAPY]   1. Incorrect interface name")
-                log.warning(f"[SCAPY]   2. No admin rights")
-                log.warning(f"[SCAPY]   3. Interface not connected or enabled")
-                log.warning(f"[SCAPY]   4. Firewall blocking packet capture")
-                log.warning(f"[SCAPY]   5. No devices connected to this interface")
+                log.warning("[SCAPY] Possible reasons:")
+                log.warning("[SCAPY]   1. Incorrect interface name")
+                log.warning("[SCAPY]   2. No admin rights")
+                log.warning("[SCAPY]   3. Interface not connected or enabled")
+                log.warning("[SCAPY]   4. Firewall blocking packet capture")
+                log.warning("[SCAPY]   5. No devices connected to this interface")
         finally:
             self.is_capturing = False
 
@@ -491,7 +547,7 @@ class HybridCapture:
         self.is_capturing = False
 
         #  停止Raw Socket引擎（如果使用）
-        if hasattr(self, 'raw_socket_engine') and self.raw_socket_engine:
+        if hasattr(self, "raw_socket_engine") and self.raw_socket_engine:
             try:
                 log.info(" 停止Raw Socket引擎")
                 self.raw_socket_engine.stop_capture()
@@ -525,10 +581,14 @@ class HybridCapture:
         self._current_callback = None
 
         #  打印运行指标
-        log.info("📊 Capture metrics: rx_packets=%d, parsed=%d, parse_errors=%d, callbacks=%d, filtered=%d",
-                 self.metrics["rx_packets"], self.metrics["parsed"],
-                 self.metrics["parse_errors"], self.metrics["callbacks"],
-                 self.metrics["filtered"])
+        log.info(
+            "📊 Capture metrics: rx_packets=%d, parsed=%d, parse_errors=%d, callbacks=%d, filtered=%d",
+            self.metrics["rx_packets"],
+            self.metrics["parsed"],
+            self.metrics["parse_errors"],
+            self.metrics["callbacks"],
+            self.metrics["filtered"],
+        )
 
         # 🔥 修复假死问题：不阻塞等待线程结束，让线程自然退出
         # 线程会在daemon=True时随主进程退出，或在自己的超时后退出
@@ -549,7 +609,7 @@ class HybridCapture:
 
         # 关闭线程池
         try:
-            if hasattr(self._callback_pool, 'shutdown'):
+            if hasattr(self._callback_pool, "shutdown"):
                 self._callback_pool.shutdown(wait=True)
         except Exception:
             log.exception("Error shutting down callback pool")

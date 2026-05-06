@@ -5,22 +5,15 @@ Enhanced with Network Intent Analysis
 """
 
 from dataclasses import dataclass
-from typing import Optional
 
 from .utils import safe_get
-from .port_profile import (
-    PortIntentProfile,
-    infer_port_intent,
-    format_intent_profile,
-    PortRole,
-    NetworkIntent,
-    DeviceType  # 新增导入
-)
+from .port_profile import PortIntentProfile, infer_port_intent, PortRole  # 新增导入
 
 
 @dataclass
 class DeviceView:
     """Clean view model for UI/export - no raw device objects"""
+
     # Protocol
     protocol: str
     protocol_style: str
@@ -75,9 +68,9 @@ def format_vlan(device, intent_profile=None) -> str:
     修复: 安全处理intent_profile，避免向后兼容问题
     """
     # 🔥 NEW: 如果有intent_profile，使用网络意图推断结果
-    if intent_profile and hasattr(intent_profile, 'role') and intent_profile.role:
-        port_vlan = safe_get(device, 'port_vlan')
-        protocol_vlan = safe_get(device, 'protocol_vlan_id')
+    if intent_profile and hasattr(intent_profile, "role") and intent_profile.role:
+        port_vlan = safe_get(device, "port_vlan")
+        protocol_vlan = safe_get(device, "protocol_vlan_id")
 
         # 🔥 语义增强：根据端口角色调整VLAN显示
         if intent_profile.role in [PortRole.TRUNK_NATIVE, PortRole.TRUNK_NO_NATIVE]:
@@ -89,10 +82,14 @@ def format_vlan(device, intent_profile=None) -> str:
             else:
                 return "Trunk"  # 最简短
 
-        elif intent_profile.role in [PortRole.ACCESS_TERMINAL, PortRole.ACCESS_WIRELESS, PortRole.ACCESS_VOICE]:
+        elif intent_profile.role in [
+            PortRole.ACCESS_TERMINAL,
+            PortRole.ACCESS_WIRELESS,
+            PortRole.ACCESS_VOICE,
+        ]:
             # Access端口强调Untagged语义
             if port_vlan:
-                tagged = safe_get(port_vlan, 'tagged')
+                tagged = safe_get(port_vlan, "tagged")
                 tagged_text = "T" if tagged else "U"  # 缩短为T/U
                 return f"{port_vlan.vlan_id}({tagged_text})"  # 缩短显示
             else:
@@ -109,36 +106,36 @@ def format_vlan(device, intent_profile=None) -> str:
 
     # Original logic (fallback)
     # Check for CDP Native VLAN
-    native_vlan = safe_get(device, 'native_vlan')
+    native_vlan = safe_get(device, "native_vlan")
     if native_vlan:
         return f"{native_vlan} (Native VLAN)"
 
     # Check for H3C private TLV
-    h3c_vlan = safe_get(device, 'h3c_native_vlan')
+    h3c_vlan = safe_get(device, "h3c_native_vlan")
     if h3c_vlan:
         return f"{h3c_vlan} (H3C私有TLV)"
 
     # Standard LLDP port VLAN
-    port_vlan = safe_get(device, 'port_vlan')
+    port_vlan = safe_get(device, "port_vlan")
     if not port_vlan:
         return "未提供"
 
     vlan_text = str(port_vlan.vlan_id)
 
     # VLAN name
-    vlan_name = safe_get(port_vlan, 'vlan_name')
+    vlan_name = safe_get(port_vlan, "vlan_name")
     if not vlan_name:
-        vlans = safe_get(device, 'vlans', [])
+        vlans = safe_get(device, "vlans", [])
         for v in vlans:
-            if safe_get(v, 'vlan_id') == port_vlan.vlan_id:
-                vlan_name = safe_get(v, 'vlan_name')
+            if safe_get(v, "vlan_id") == port_vlan.vlan_id:
+                vlan_name = safe_get(v, "vlan_name")
                 break
 
     if vlan_name:
         vlan_text += f" ({vlan_name})"
 
     # Tagged/Untagged
-    tagged = safe_get(port_vlan, 'tagged')
+    tagged = safe_get(port_vlan, "tagged")
     vlan_text += " (Tagged)" if tagged else " (Untagged)"
 
     return vlan_text
@@ -147,15 +144,15 @@ def format_vlan(device, intent_profile=None) -> str:
 def get_vlan_style(device) -> str:
     """Get VLAN display style"""
     # CDP Native VLAN
-    if safe_get(device, 'native_vlan'):
+    if safe_get(device, "native_vlan"):
         return EMERALD_BADGE
 
     # H3C private TLV
-    if safe_get(device, 'h3c_native_vlan'):
+    if safe_get(device, "h3c_native_vlan"):
         return YELLOW_BADGE
 
     # Standard LLDP
-    if safe_get(device, 'port_vlan'):
+    if safe_get(device, "port_vlan"):
         return GREEN_BADGE
 
     return ""
@@ -167,27 +164,27 @@ def format_macphy(device) -> str:
 
     修复: 安全处理Ruijie等厂商缺失macphy_config的情况
     """
-    macphy = safe_get(device, 'macphy_config')
+    macphy = safe_get(device, "macphy_config")
     if not macphy:
         return "未提供"
 
     # All supported speeds
     # 🔥 安全检查: supported_speeds可能是None或不存在
-    if hasattr(macphy, 'supported_speeds') and macphy.supported_speeds:
+    if hasattr(macphy, "supported_speeds") and macphy.supported_speeds:
         return " / ".join(macphy.supported_speeds)
 
     # Current speed + duplex
-    speed = safe_get(macphy, 'speed')
+    speed = safe_get(macphy, "speed")
     if speed:
         phy_text = speed
-        duplex = safe_get(macphy, 'duplex')
+        duplex = safe_get(macphy, "duplex")
         if duplex:
             phy_text += f" {duplex}"
         return phy_text
 
     # Autonegotiation
-    autoneg = safe_get(device, 'autonegotiation')
-    if autoneg and safe_get(autoneg, 'supported'):
+    autoneg = safe_get(device, "autonegotiation")
+    if autoneg and safe_get(autoneg, "supported"):
         return "自动协商"
 
     return "未提供"
@@ -195,16 +192,16 @@ def format_macphy(device) -> str:
 
 def format_link_agg(device) -> str:
     """Format link aggregation info"""
-    link_agg = safe_get(device, 'link_aggregation')
+    link_agg = safe_get(device, "link_aggregation")
     if not link_agg:
         return "未提供"
 
-    if not safe_get(link_agg, 'supported'):
+    if not safe_get(link_agg, "supported"):
         return "不支持"
 
-    if safe_get(link_agg, 'enabled'):
+    if safe_get(link_agg, "enabled"):
         agg_text = "已启用"
-        agg_id = safe_get(link_agg, 'aggregation_id')
+        agg_id = safe_get(link_agg, "aggregation_id")
         if agg_id:
             agg_text += f" (组ID: {agg_id})"
         return agg_text
@@ -214,22 +211,22 @@ def format_link_agg(device) -> str:
 
 def format_poe(device) -> str:
     """Format PoE information"""
-    poe = safe_get(device, 'poe')
-    if not poe or not safe_get(poe, 'supported'):
+    poe = safe_get(device, "poe")
+    if not poe or not safe_get(poe, "supported"):
         return "不支持"
 
     parts = []
 
     # Power source
-    power_source = safe_get(poe, 'power_source')
+    power_source = safe_get(poe, "power_source")
     if power_source:
-        if 'PSE' in power_source:
+        if "PSE" in power_source:
             parts.append("供电设备")
-        elif 'PD' in power_source:
+        elif "PD" in power_source:
             parts.append("受电设备")
 
     # Power allocated
-    power_allocated = safe_get(poe, 'power_allocated')
+    power_allocated = safe_get(poe, "power_allocated")
     if power_allocated:
         power_w = power_allocated / 1000
         if power_w >= 1:
@@ -238,16 +235,16 @@ def format_poe(device) -> str:
             parts.append(f"{power_allocated}mW")
 
     # Priority
-    priority = safe_get(poe, 'power_priority')
+    priority = safe_get(poe, "power_priority")
     if priority:
         parts.append(f"优先级:{priority}")
 
     # Class and Type
-    power_class = safe_get(poe, 'power_class')
+    power_class = safe_get(poe, "power_class")
     if power_class:
         parts.append(f"({power_class})")
 
-    power_type = safe_get(poe, 'power_type')
+    power_type = safe_get(poe, "power_type")
     if power_type:
         parts.append(f"[{power_type}]")
 
@@ -260,7 +257,7 @@ def format_capabilities(device) -> str:
 
     修复: 安全处理Ruijie等厂商缺失Capabilities TLV的情况
     """
-    caps = safe_get(device, 'capabilities')
+    caps = safe_get(device, "capabilities")
     if not caps:
         return "未知"
 
@@ -283,8 +280,8 @@ def to_view(device) -> DeviceView:
     所有的协议差异化（LLDP vs CDP）都在这里处理，UI层不再需要if/else
     """
     # 🔥 KEY: 协议类型判断（内部处理，UI层无感知）
-    protocol = safe_get(device, 'protocol', 'LLDP')
-    is_cdp = (protocol == 'CDP')
+    protocol = safe_get(device, "protocol", "LLDP")
+    is_cdp = protocol == "CDP"
 
     # 🔥 KEY: Port Intent Analysis (Network Intent Analysis)
     port_intent = infer_port_intent(device)
@@ -293,54 +290,58 @@ def to_view(device) -> DeviceView:
 
     # 🔥 修复：删除重复的CDP处理逻辑，使用后面统一的处理逻辑
     # 初始化默认值，后面会根据协议类型覆盖
-    system_name = '未知设备'
-    device_model = '未提供'
-    serial_number = '未提供'
-    mac = '未提供'
-    id_type = '未知'
-    ip = '未提供'
-    software_version = '未提供'
-    lldp_med = '未提供'
-    port_id = '未提供'
-    port_type = '未知'
-    port_desc = '未知'
+    system_name = "未知设备"
+    device_model = "未提供"
+    serial_number = "未提供"
+    mac = "未提供"
+    id_type = "未知"
+    ip = "未提供"
+    software_version = "未提供"
+    lldp_med = "未提供"
+    port_id = "未提供"
+    port_type = "未知"
+    port_desc = "未知"
 
     # LLDP协议的初步处理（后面会被CDP逻辑覆盖如果是CDP）
     if not is_cdp:
-        system_name = device.system_name or '未知设备'
-        device_model = safe_get(device, 'device_model') or safe_get(device, 'product_model', '未提供')
+        system_name = device.system_name or "未知设备"
+        device_model = safe_get(device, "device_model") or safe_get(
+            device, "product_model", "未提供"
+        )
 
         # 设备模型提取优化
-        if device_model == '未提供' and device.system_description:
-            desc_lines = device.system_description.split('\n')
+        if device_model == "未提供" and device.system_description:
+            desc_lines = device.system_description.split("\n")
             for line in desc_lines:
-                if 'H3C' in line and 'Comware' not in line and len(line.strip()) > 10:
+                if "H3C" in line and "Comware" not in line and len(line.strip()) > 10:
                     device_model = line.strip()
                     break
 
-        serial_number = safe_get(device, 'serial_number', '未提供')
+        serial_number = safe_get(device, "serial_number", "未提供")
 
         # MAC地址处理
         if device.chassis_id:
             mac = device.chassis_id.value
             id_type = device.chassis_id.type.name
         else:
-            mac = '未提供'
-            id_type = '未知'
+            mac = "未提供"
+            id_type = "未知"
 
-        ip = safe_get(device, 'management_ip', '未提供')
-        software_version = safe_get(device, 'software_version', '未提供')
-        lldp_med = '未提供'
+        ip = safe_get(device, "management_ip", "未提供")
+        software_version = safe_get(device, "software_version", "未提供")
+        lldp_med = "未提供"
 
         # 端口信息处理
-        port_id_obj = safe_get(device, 'port_id')
+        port_id_obj = safe_get(device, "port_id")
         # 🔥 修复：确保 port_id 是字符串，而不是 LLDPPortID 对象
-        if port_id_obj and hasattr(port_id_obj, 'value'):
-            port_id = str(port_id_obj.value) if port_id_obj.value else '未提供'
+        if port_id_obj and hasattr(port_id_obj, "value"):
+            port_id = str(port_id_obj.value) if port_id_obj.value else "未提供"
         else:
-            port_id = '未提供'
-        port_type = safe_get(port_id_obj, 'type', '未知').name if port_id_obj else '未知'
-        port_desc = safe_get(device, 'port_description', '未知')
+            port_id = "未提供"
+        port_type = (
+            safe_get(port_id_obj, "type", "未知").name if port_id_obj else "未知"
+        )
+        port_desc = safe_get(device, "port_description", "未知")
 
     # Protocol display
     if is_cdp:
@@ -353,83 +354,98 @@ def to_view(device) -> DeviceView:
     # Device Info
     if is_cdp:
         system_name = (
-            safe_get(device, 'system_name') or
-            safe_get(device, 'device_id') or
-            "未知CDP设备"
+            safe_get(device, "system_name")
+            or safe_get(device, "device_id")
+            or "未知CDP设备"
         )
-        device_model = safe_get(device, 'platform') or "未提供"
+        device_model = safe_get(device, "platform") or "未提供"
         serial_number = "未提供"
         mac = "N/A (CDP协议)"
         id_type = "CDP"
-        software_version = safe_get(device, 'software_version') or "未提供"
+        software_version = safe_get(device, "software_version") or "未提供"
         lldp_med = "N/A (CDP协议)"
 
         # Management IP
-        mgmt_addrs = safe_get(device, 'management_addresses')
+        mgmt_addrs = safe_get(device, "management_addresses")
         if mgmt_addrs:
-            ipv4 = next((addr.address for addr in mgmt_addrs if safe_get(addr, 'address_type') == "IPv4"), None)
+            ipv4 = next(
+                (
+                    addr.address
+                    for addr in mgmt_addrs
+                    if safe_get(addr, "address_type") == "IPv4"
+                ),
+                None,
+            )
             ip = ipv4 or "未提供"
         else:
             ip = "未提供"
 
     else:
         # LLDP
-        chassis_id = safe_get(device, 'chassis_id')
+        chassis_id = safe_get(device, "chassis_id")
         # 🔥 修复：确保 mac 是字符串，而不是 LLDPChassisID 对象
-        if chassis_id and hasattr(chassis_id, 'value'):
+        if chassis_id and hasattr(chassis_id, "value"):
             mac = str(chassis_id.value) if chassis_id.value else "未提供"
         else:
             mac = "未提供"
-        id_type = safe_get(chassis_id, 'type', '未知').name if chassis_id else "未知"
-        system_name = safe_get(device, 'system_name') or "未知设备"
+        id_type = safe_get(chassis_id, "type", "未知").name if chassis_id else "未知"
+        system_name = safe_get(device, "system_name") or "未知设备"
 
         # Device model
         device_model = (
-            safe_get(device, 'device_model') or
-            safe_get(device, 'product_model') or
-            "未提供"
+            safe_get(device, "device_model")
+            or safe_get(device, "product_model")
+            or "未提供"
         )
 
         # Extract from system description
         if device_model == "未提供":
-            sys_desc = safe_get(device, 'system_description')
+            sys_desc = safe_get(device, "system_description")
             if sys_desc:
-                for line in sys_desc.split('\n'):
-                    if 'H3C' in line and 'Comware' not in line and len(line.strip()) > 10:
+                for line in sys_desc.split("\n"):
+                    if (
+                        "H3C" in line
+                        and "Comware" not in line
+                        and len(line.strip()) > 10
+                    ):
                         device_model = line.strip()
                         break
 
-        serial_number = safe_get(device, 'serial_number') or "未提供"
-        software_version = safe_get(device, 'software_version') or "未提供"
-        ip = safe_get(device, 'management_ip') or "未提供"
+        serial_number = safe_get(device, "serial_number") or "未提供"
+        software_version = safe_get(device, "software_version") or "未提供"
+        ip = safe_get(device, "management_ip") or "未提供"
 
         # LLDP-MED
-        lldp_med_caps = safe_get(device, 'lldp_med_capabilities')
-        if lldp_med_caps and safe_get(lldp_med_caps, 'capabilities'):
-            lldp_med = " / ".join(lldp_med_caps['capabilities'])
+        lldp_med_caps = safe_get(device, "lldp_med_capabilities")
+        if lldp_med_caps and safe_get(lldp_med_caps, "capabilities"):
+            lldp_med = " / ".join(lldp_med_caps["capabilities"])
         else:
             lldp_med = "未提供"
 
     # Port Info
     if is_cdp:
         # 🔥 修复：确保 CDP port_id 是字符串
-        port_id_raw = safe_get(device, 'port_id')
+        port_id_raw = safe_get(device, "port_id")
         if port_id_raw:
             # CDP port_id 应该是字符串，但防止意外情况
-            port_id = str(port_id_raw) if not isinstance(port_id_raw, str) else port_id_raw
+            port_id = (
+                str(port_id_raw) if not isinstance(port_id_raw, str) else port_id_raw
+            )
         else:
             port_id = "未提供"
         port_type = "CDP端口标识"
         port_desc = "未提供"
     else:
-        port_id_obj = safe_get(device, 'port_id')
+        port_id_obj = safe_get(device, "port_id")
         # 🔥 修复：确保 port_id 是字符串，而不是 LLDPPortID 对象
-        if port_id_obj and hasattr(port_id_obj, 'value'):
-            port_id = str(port_id_obj.value) if port_id_obj.value else '未提供'
+        if port_id_obj and hasattr(port_id_obj, "value"):
+            port_id = str(port_id_obj.value) if port_id_obj.value else "未提供"
         else:
-            port_id = '未提供'
-        port_type = safe_get(port_id_obj, 'type', '未知').name if port_id_obj else '未知'
-        port_desc = safe_get(device, 'port_description') or "未知"
+            port_id = "未提供"
+        port_type = (
+            safe_get(port_id_obj, "type", "未知").name if port_id_obj else "未知"
+        )
+        port_desc = safe_get(device, "port_description") or "未知"
 
     # VLAN
     # 🔥 NEW: 让format_vlan依赖网络意图推断结果
@@ -437,7 +453,7 @@ def to_view(device) -> DeviceView:
     vlan_style = get_vlan_style(device)
 
     # Protocol VLAN
-    protocol_vlan_id = safe_get(device, 'protocol_vlan_id')
+    protocol_vlan_id = safe_get(device, "protocol_vlan_id")
     if protocol_vlan_id:
         protocol_vlan = str(protocol_vlan_id)
         protocol_vlan_style = PURPLE_BADGE
@@ -450,7 +466,7 @@ def to_view(device) -> DeviceView:
     link_agg = format_link_agg(device)
 
     # MTU
-    max_frame = safe_get(device, 'max_frame_size')
+    max_frame = safe_get(device, "max_frame_size")
     mtu = f"{max_frame} 字节" if max_frame else "未提供"
 
     poe = format_poe(device)
@@ -520,7 +536,7 @@ def _format_intent_summary(port_intent: PortIntentProfile) -> str:
 
     # 安全获取device_type，避免None错误
     device_type_text = ""
-    if hasattr(port_intent, 'device_type') and port_intent.device_type:
+    if hasattr(port_intent, "device_type") and port_intent.device_type:
         device_type_text = f" | {port_intent.device_type.value}"
 
     return f"{port_intent.role.value}{device_type_text} ({confidence_label}置信度 {port_intent.confidence}%)"

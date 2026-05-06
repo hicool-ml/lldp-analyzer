@@ -7,6 +7,7 @@ Tests cover:
 3. Callback invocation
 4. Error handling in packet processing
 """
+
 import pytest
 import time
 from unittest.mock import Mock, MagicMock, patch
@@ -28,7 +29,7 @@ class TestBackendLoop:
         """Test handling of LLDP packets"""
         # Create mock LLDP packet
         mock_eth = MagicMock()
-        mock_eth.type = 0x88cc  # LLDP Ethertype
+        mock_eth.type = 0x88CC  # LLDP Ethertype
         mock_eth.data = b"\x02\x07\x04\x00\x11\x22\x33\x44\x55"  # Minimal chassis ID
 
         # Mock parser to return a device
@@ -55,6 +56,7 @@ class TestBackendLoop:
 
         # Mock parser to return a device
         from lldp.cdp.model import CDPDevice
+
         mock_device = CDPDevice()
         mock_device.device_id = "Cisco-Switch"
         mock_device._is_valid = True
@@ -85,7 +87,7 @@ class TestBackendLoop:
         """Test that callback is invoked when device is discovered"""
         # Create mock LLDP packet
         mock_eth = MagicMock()
-        mock_eth.type = 0x88cc
+        mock_eth.type = 0x88CC
         mock_eth.data = b"\x02\x07\x04\x00\x11\x22\x33\x44\x55"
 
         # Mock parser
@@ -105,7 +107,7 @@ class TestBackendLoop:
         """Test that invalid devices are not queued"""
         # Create mock LLDP packet
         mock_eth = MagicMock()
-        mock_eth.type = 0x88cc
+        mock_eth.type = 0x88CC
         mock_eth.data = b"\x02\x07\x04\x00\x11\x22\x33\x44\x55"
 
         # Mock parser to return invalid device
@@ -124,7 +126,7 @@ class TestBackendLoop:
         """Test that parser exceptions are handled gracefully"""
         # Create mock packet
         mock_eth = MagicMock()
-        mock_eth.type = 0x88cc
+        mock_eth.type = 0x88CC
         mock_eth.data = b"malformed data"
 
         # Mock parser to raise exception
@@ -142,7 +144,7 @@ class TestBackendLoop:
         """Test that protocol field is set correctly"""
         # Test LLDP
         mock_lldp = MagicMock()
-        mock_lldp.type = 0x88cc
+        mock_lldp.type = 0x88CC
         mock_lldp.data = b"data"
 
         mock_lldp_device = LLDPDevice()
@@ -157,6 +159,7 @@ class TestBackendLoop:
 
         # Test CDP
         import queue
+
         capture.device_queue = queue.Queue()  # Clear queue
 
         mock_cdp = MagicMock()
@@ -165,6 +168,7 @@ class TestBackendLoop:
         mock_cdp.data = b"data"
 
         from lldp.cdp.model import CDPDevice
+
         mock_cdp_device = CDPDevice()
         mock_cdp_device.device_id = "cdp_device"
         mock_cdp_device.is_valid = Mock(return_value=True)
@@ -190,7 +194,7 @@ class TestBackendIntegration:
         capture = HybridCapture()
 
         mock_eth = MagicMock()
-        mock_eth.type = 0x88cc
+        mock_eth.type = 0x88CC
         mock_eth.data = b"data"
 
         mock_device = LLDPDevice()

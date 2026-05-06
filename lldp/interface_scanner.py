@@ -4,16 +4,16 @@
 支持Windows和Linux平台
 """
 
-import sys
 import logging
 import platform
 from typing import List, Optional, NamedTuple
-from dataclasses import dataclass
 
 log = logging.getLogger("lldp.interface_scanner")
 
+
 class NetworkInterface(NamedTuple):
     """网络接口信息（兼容scapy接口对象）"""
+
     name: str
     description: str
     mac: Optional[str] = None
@@ -64,7 +64,7 @@ class InterfaceScanner:
 
             # 2. 获取psutil接口信息（友好名称和IP）
             net_if_addrs = psutil.net_if_addrs()
-            net_io_counters = psutil.net_io_counters(pernic=True)
+            psutil.net_io_counters(pernic=True)
 
             # 3. 匹配pcapy设备名和psutil友好名称
             for pcap_dev in pcap_devs:
@@ -72,7 +72,7 @@ class InterfaceScanner:
                 # 需要找到对应的友好名称
 
                 # 提取GUID
-                match = re.search(r'\{[A-F0-9-]+\}', pcap_dev, re.IGNORECASE)
+                match = re.search(r"\{[A-F0-9-]+\}", pcap_dev, re.IGNORECASE)
                 if not match:
                     continue
 
@@ -106,7 +106,7 @@ class InterfaceScanner:
                         name=pcap_dev,
                         description=friendly_name or pcap_dev,
                         mac=mac,
-                        ips=ips
+                        ips=ips,
                     )
                     interfaces.append(interface)
 
@@ -135,17 +135,23 @@ class InterfaceScanner:
                 capture_name = getattr(iface, "network_name", None) or str(iface)
                 friendly_name = getattr(iface, "name", "") or capture_name
                 description = getattr(iface, "description", "") or friendly_name
-                display_desc = f"{friendly_name} - {description}" if friendly_name not in description else description
+                display_desc = (
+                    f"{friendly_name} - {description}"
+                    if friendly_name not in description
+                    else description
+                )
 
                 if not self._should_include_interface(capture_name, display_desc):
                     continue
 
-                interfaces.append(NetworkInterface(
-                    name=str(capture_name),
-                    description=str(display_desc),
-                    mac=getattr(iface, "mac", None),
-                    ips=[]
-                ))
+                interfaces.append(
+                    NetworkInterface(
+                        name=str(capture_name),
+                        description=str(display_desc),
+                        mac=getattr(iface, "mac", None),
+                        ips=[],
+                    )
+                )
 
         except ImportError as e:
             log.warning("Scapy不可用，无法通过Npcap扫描接口: %s", e)
@@ -166,7 +172,7 @@ class InterfaceScanner:
 
             # 获取所有网络接口
             net_if_addrs = psutil.net_if_addrs()
-            net_io_counters = psutil.net_io_counters(pernic=True)
+            psutil.net_io_counters(pernic=True)
 
             for if_name, if_addrs in net_if_addrs.items():
                 # 应用过滤逻辑
@@ -186,16 +192,15 @@ class InterfaceScanner:
                 # 获取接口描述
                 try:
                     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                    info = fcntl.ioctl(s.fileno(), 0x8927, struct.pack('256s', if_name.encode()[:15]))
+                    fcntl.ioctl(
+                        s.fileno(), 0x8927, struct.pack("256s", if_name.encode()[:15])
+                    )
                     s.close()
                 except Exception:
-                    info = if_name
+                    pass
 
                 interface = NetworkInterface(
-                    name=if_name,
-                    description=if_name,
-                    mac=mac,
-                    ips=ips
+                    name=if_name, description=if_name, mac=mac, ips=ips
                 )
                 interfaces.append(interface)
 
@@ -238,10 +243,7 @@ class InterfaceScanner:
                     desc = f"{if_name} (Ethernet)"
 
                 interface = NetworkInterface(
-                    name=if_name,
-                    description=desc,
-                    mac=mac,
-                    ips=ips
+                    name=if_name, description=desc, mac=mac, ips=ips
                 )
                 interfaces.append(interface)
 
@@ -279,9 +281,18 @@ class InterfaceScanner:
 
         # 过滤掉虚拟接口
         virtual_keywords = [
-            "virtual", "vmware", "virtualbox", "vbox",
-            "tunnel", "hyper-v", "docker", "bridge",
-            "loopback", "pseudo", "veth", "virbr"
+            "virtual",
+            "vmware",
+            "virtualbox",
+            "vbox",
+            "tunnel",
+            "hyper-v",
+            "docker",
+            "bridge",
+            "loopback",
+            "pseudo",
+            "veth",
+            "virbr",
         ]
 
         for keyword in virtual_keywords:
@@ -294,9 +305,18 @@ class InterfaceScanner:
 
         # 包含物理接口
         physical_keywords = [
-            "ethernet", "eth", "en", "intel", "realtek",
-            "broadcom", "cisco", "usb", "thunderbolt",
-            "ax88179", "rtl8153", "ue300"
+            "ethernet",
+            "eth",
+            "en",
+            "intel",
+            "realtek",
+            "broadcom",
+            "cisco",
+            "usb",
+            "thunderbolt",
+            "ax88179",
+            "rtl8153",
+            "ue300",
         ]
 
         # 如果包含物理接口关键字，优先包含

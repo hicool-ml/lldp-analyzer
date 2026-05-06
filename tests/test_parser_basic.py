@@ -17,21 +17,31 @@ class TestLLDPParserBasics:
 
     def test_parse_empty_packet(self):
         """测试空包"""
-        result = self.parser.parse_packet(b'')
+        result = self.parser.parse_packet(b"")
         assert result is None
 
     def test_parse_incomplete_header(self):
         """测试不完整的TLV header (只有1字节)"""
-        result = self.parser.parse_packet(b'\x00')
+        result = self.parser.parse_packet(b"\x00")
         assert result is None
 
     def test_parse_tlv_length_exceeds_packet(self):
         """测试TLV长度超过包长度 - 边界检查"""
         # 构造一个声称有100字节长度但实际只有10字节的包
-        packet = bytes([
-            0x02, 0x64,  # Type=2, Length=100 (声称100字节)
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  # 只有8字节数据
-        ])
+        packet = bytes(
+            [
+                0x02,
+                0x64,  # Type=2, Length=100 (声称100字节)
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,  # 只有8字节数据
+            ]
+        )
         result = self.parser.parse_packet(packet)
         # 应该安全返回None，不会崩溃
         assert result is None
@@ -40,10 +50,17 @@ class TestLLDPParserBasics:
         """测试超大TLV长度 - DoS防护"""
         # 构造一个声称有MAX_TLV_LENGTH+1字节的包
         from lldp.parser import MAX_TLV_LENGTH
+
         large_length = MAX_TLV_LENGTH + 1
-        packet = bytes([
-            0x02, (large_length >> 8) & 0xFF, large_length & 0xFF,  # 超大长度
-        ]) + bytes(10)  # 少量数据
+        packet = bytes(
+            [
+                0x02,
+                (large_length >> 8) & 0xFF,
+                large_length & 0xFF,  # 超大长度
+            ]
+        ) + bytes(
+            10
+        )  # 少量数据
         result = self.parser.parse_packet(packet)
         # 应该被拒绝，防止DoS攻击
         assert result is None
@@ -51,11 +68,21 @@ class TestLLDPParserBasics:
     def test_parse_end_tlv_stops_parsing(self):
         """测试End TLV (type=0) 立即停止解析"""
         # 构造一个包含End TLV的包
-        packet = bytes([
-            0x02, 0x03, 0x01, 0x02, 0x03,  # 一个有效TLV
-            0x00, 0x00,  # End of LLDPDU
-            0xFF, 0xFF, 0xFF, 0xFF,  # 垃圾数据（应该被忽略）
-        ])
+        packet = bytes(
+            [
+                0x02,
+                0x03,
+                0x01,
+                0x02,
+                0x03,  # 一个有效TLV
+                0x00,
+                0x00,  # End of LLDPDU
+                0xFF,
+                0xFF,
+                0xFF,
+                0xFF,  # 垃圾数据（应该被忽略）
+            ]
+        )
         result = self.parser.parse_packet(packet)
         # 应该成功解析，不读取垃圾数据
         assert result is not None
@@ -71,10 +98,14 @@ class TestSystemCapabilities:
         """测试标准4字节Capabilities TLV"""
         # 前2字节：supported (Bridge + Router)
         # 后2字节：enabled (只有Bridge)
-        tlv_value = bytes([
-            0x00, 0x14,  # supported: Bit 2(Bridge) + Bit 4(Router) = 0x0014
-            0x00, 0x04,  # enabled: Bit 2(Bridge) = 0x0004
-        ])
+        tlv_value = bytes(
+            [
+                0x00,
+                0x14,  # supported: Bit 2(Bridge) + Bit 4(Router) = 0x0014
+                0x00,
+                0x04,  # enabled: Bit 2(Bridge) = 0x0004
+            ]
+        )
 
         caps = self.parser._parse_capabilities(tlv_value)
 
@@ -119,10 +150,15 @@ class TestManagementAddress:
         # 按照IEEE 802.1AB标准：
         # octet 0: address length = 4
         # octets 1-4: IPv4 address
-        tlv_value = bytes([
-            0x04,  # length = 4
-            192, 168, 1, 1,  # IPv4 address
-        ])
+        tlv_value = bytes(
+            [
+                0x04,  # length = 4
+                192,
+                168,
+                1,
+                1,  # IPv4 address
+            ]
+        )
 
         result = self.parser._parse_management_address(tlv_value)
 
@@ -178,24 +214,34 @@ class TestStandardLLDPStructure:
     def test_minimal_valid_lldp_packet(self):
         """测试最小有效LLDP包"""
         # 构造一个最小的有效LLDP包
-        packet = bytes([
-            # Chassis ID TLV (Type=1, Length=7)
-            0x02, 0x07,  # Type=1, Length=7
-            0x04,  # Chassis ID subtype = MAC address
-            0x00, 0x11, 0x22, 0x33, 0x44, 0x55,  # MAC address
-
-            # Port ID TLV (Type=2, Length=3)
-            0x04, 0x03,  # Type=2, Length=3
-            0x05,  # Port ID subtype = locally assigned
-            0x31, 0x32,  # Port ID = "12"
-
-            # Time to Live TLV (Type=3, Length=2)
-            0x06, 0x02,  # Type=3, Length=2
-            0x00, 0x78,  # TTL = 120 seconds
-
-            # End of LLDPDU TLV (Type=0, Length=0)
-            0x00, 0x00,
-        ])
+        packet = bytes(
+            [
+                # Chassis ID TLV (Type=1, Length=7)
+                0x02,
+                0x07,  # Type=1, Length=7
+                0x04,  # Chassis ID subtype = MAC address
+                0x00,
+                0x11,
+                0x22,
+                0x33,
+                0x44,
+                0x55,  # MAC address
+                # Port ID TLV (Type=2, Length=3)
+                0x04,
+                0x03,  # Type=2, Length=3
+                0x05,  # Port ID subtype = locally assigned
+                0x31,
+                0x32,  # Port ID = "12"
+                # Time to Live TLV (Type=3, Length=2)
+                0x06,
+                0x02,  # Type=3, Length=2
+                0x00,
+                0x78,  # TTL = 120 seconds
+                # End of LLDPDU TLV (Type=0, Length=0)
+                0x00,
+                0x00,
+            ]
+        )
 
         result = self.parser.parse_packet(packet)
 
@@ -205,23 +251,32 @@ class TestStandardLLDPStructure:
 
     def test_lldp_packet_without_end_tlv(self):
         """测试没有End TLV的包"""
-        packet = bytes([
-            # Chassis ID TLV
-            0x02, 0x07,
-            0x04,
-            0x00, 0x11, 0x22, 0x33, 0x44, 0x55,
-
-            # Port ID TLV
-            0x04, 0x03,
-            0x05,
-            0x31, 0x32,
-
-            # Time to Live TLV
-            0x06, 0x02,
-            0x00, 0x78,
-
-            # 故意省略End TLV
-        ])
+        packet = bytes(
+            [
+                # Chassis ID TLV
+                0x02,
+                0x07,
+                0x04,
+                0x00,
+                0x11,
+                0x22,
+                0x33,
+                0x44,
+                0x55,
+                # Port ID TLV
+                0x04,
+                0x03,
+                0x05,
+                0x31,
+                0x32,
+                # Time to Live TLV
+                0x06,
+                0x02,
+                0x00,
+                0x78,
+                # 故意省略End TLV
+            ]
+        )
 
         result = self.parser.parse_packet(packet)
 

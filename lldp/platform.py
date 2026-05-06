@@ -6,7 +6,6 @@ Handles platform-specific differences between Windows, macOS, and Linux.
 
 import sys
 import platform
-import subprocess
 import logging
 from typing import List, Tuple, Optional
 from enum import Enum
@@ -16,6 +15,7 @@ log = logging.getLogger("lldp.platform")
 
 class OSType(Enum):
     """Operating system types"""
+
     WINDOWS = "windows"
     MACOS = "macos"
     LINUX = "linux"
@@ -47,10 +47,11 @@ class PlatformConfig:
         try:
             if self.os_type == OSType.WINDOWS:
                 import ctypes
+
                 return ctypes.windll.shell32.IsUserAnAdmin() != 0
             else:
                 # Unix-like systems (macOS/Linux)
-                return __import__('os').getuid() == 0
+                return __import__("os").getuid() == 0
         except Exception as e:
             log.warning(f"Could not check admin privileges: {e}")
             return False
@@ -59,29 +60,52 @@ class PlatformConfig:
         """Get platform-specific interface naming hints"""
         if self.os_type == OSType.WINDOWS:
             return {
-                "physical_keywords": ["Ethernet", "Local Area Connection", "Intel", "Realtek"],
+                "physical_keywords": [
+                    "Ethernet",
+                    "Local Area Connection",
+                    "Intel",
+                    "Realtek",
+                ],
                 "virtual_keywords": ["VMware", "VirtualBox", "Tunnel", "Hyper-V"],
                 "wireless_keywords": ["Wi-Fi", "Wireless", "802.11"],
-                "loopback_keywords": ["Loopback", "Loopback Pseudo-Interface"]
+                "loopback_keywords": ["Loopback", "Loopback Pseudo-Interface"],
             }
         elif self.os_type == OSType.MACOS:
             return {
                 # macOS便携系统通常需要USB/Thunderbolt扩展
-                "physical_keywords": ["en", "eth", "usb", "thunderbolt", "ax"],  # en0, en1, en2... ax88179 (USB Ethernet)
+                "physical_keywords": [
+                    "en",
+                    "eth",
+                    "usb",
+                    "thunderbolt",
+                    "ax",
+                ],  # en0, en1, en2... ax88179 (USB Ethernet)
                 "virtual_keywords": ["bridge", "vbox", "vmnet", "tun", "tap"],
                 "wireless_keywords": ["wi-fi"],
                 "loopback_keywords": ["lo", "loopback"],
                 # USB/Thunderbolt适配器优先级最高（便携macOS常见）
-                "preferred_physical": ["en1", "en2", "en3", "en4", "en5"],  # 通常en0是Wi-Fi，en1+是USB/Thunderbolt以太网
-                "usb_adapter_keywords": ["usb", "ax88179", "rtl8153", "cisco", "starlink"],  # 常见USB网卡型号
-                "thunderbolt_keywords": ["thunderbolt", "tb"]
+                "preferred_physical": [
+                    "en1",
+                    "en2",
+                    "en3",
+                    "en4",
+                    "en5",
+                ],  # 通常en0是Wi-Fi，en1+是USB/Thunderbolt以太网
+                "usb_adapter_keywords": [
+                    "usb",
+                    "ax88179",
+                    "rtl8153",
+                    "cisco",
+                    "starlink",
+                ],  # 常见USB网卡型号
+                "thunderbolt_keywords": ["thunderbolt", "tb"],
             }
         elif self.os_type == OSType.LINUX:
             return {
                 "physical_keywords": ["eth", "enp", "ens"],
                 "virtual_keywords": ["virbr", "vnet", "docker", "br-"],
                 "wireless_keywords": ["wlan", "wl"],
-                "loopback_keywords": ["lo"]
+                "loopback_keywords": ["lo"],
             }
         else:
             return {}
@@ -113,7 +137,7 @@ class PlatformConfig:
                 "   - 系统会提示授予网络访问权限\n"
                 "   - 在 '系统设置 > 隐私与安全性 > 本地网络' 中确认\n"
                 "3. 如需管理员权限，请使用终端运行：\n"
-                "   sudo \"LLDP Analyzer v2.app/Contents/MacOS/LLDP Analyzer v2\"\n"
+                '   sudo "LLDP Analyzer v2.app/Contents/MacOS/LLDP Analyzer v2"\n'
                 "4. 选择正确的网络接口：\n"
                 "   - 优先选择en1, en2等（通常是有线适配器）\n"
                 "   - 避免选择en0（通常是Wi-Fi）"
@@ -159,8 +183,15 @@ class PlatformConfig:
                 usb_keywords = hints.get("usb_adapter_keywords", [])
                 thunderbolt_keywords = hints.get("thunderbolt_keywords", [])
 
-                if any(kw in name or kw in desc for kw in usb_keywords + thunderbolt_keywords):
-                    log.info("检测到USB/Thunderbolt适配器: %s (%s)", iface.description, iface.name)
+                if any(
+                    kw in name or kw in desc
+                    for kw in usb_keywords + thunderbolt_keywords
+                ):
+                    log.info(
+                        "检测到USB/Thunderbolt适配器: %s (%s)",
+                        iface.description,
+                        iface.name,
+                    )
                     return iface.name
 
             # 第二优先级：en1+ (通常是有线以太网)
@@ -245,7 +276,8 @@ class PlatformConfig:
         if self.os_type == OSType.MACOS:
             try:
                 import subprocess
-                result = subprocess.run(['sw_vers'], capture_output=True, text=True)
+
+                result = subprocess.run(["sw_vers"], capture_output=True, text=True)
                 info["macos_version"] = result.stdout.strip()
             except Exception:
                 pass

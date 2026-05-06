@@ -5,15 +5,8 @@ Pure function parser - No side effects, no UI dependencies
 
 import logging
 import struct
-from typing import Optional, Tuple
-from datetime import datetime
-from .model import (
-    CDPDevice,
-    CDPNetworkAddress,
-    CDPCapabilities,
-    CDPTLVType
-)
-
+from typing import Optional
+from .model import CDPDevice, CDPNetworkAddress, CDPCapabilities, CDPTLVType
 
 logger = logging.getLogger(__name__)
 MAX_HEX_DISPLAY = 200
@@ -111,18 +104,23 @@ class CDPParser:
             tlv_count = 0
 
             while offset + 4 <= len(cdp_data):
-                tlv_type = struct.unpack('>H', cdp_data[offset:offset+2])[0]
-                tlv_length = struct.unpack('>H', cdp_data[offset+2:offset+4])[0]
+                tlv_type = struct.unpack(">H", cdp_data[offset : offset + 2])[0]
+                tlv_length = struct.unpack(">H", cdp_data[offset + 2 : offset + 4])[0]
 
                 if tlv_length < 4:
                     logger.debug("Invalid TLV length: %d", tlv_length)
                     break
 
-                tlv_value = cdp_data[offset+4:offset+tlv_length]
+                tlv_value = cdp_data[offset + 4 : offset + tlv_length]
 
                 tlv_count += 1
-                logger.debug("TLV #%d: Type=0x%04X (%s), Length=%d",
-                             tlv_count, tlv_type, self._get_tlv_name(tlv_type), tlv_length)
+                logger.debug(
+                    "TLV #%d: Type=0x%04X (%s), Length=%d",
+                    tlv_count,
+                    tlv_type,
+                    self._get_tlv_name(tlv_type),
+                    tlv_length,
+                )
 
                 # Parse the TLV
                 self._parse_tlv(device, tlv_type, tlv_value)
@@ -132,7 +130,7 @@ class CDPParser:
 
                 # Alignment: TLVs are aligned to 4-byte boundaries
                 if offset % 4 != 0:
-                    offset += (4 - (offset % 4))
+                    offset += 4 - (offset % 4)
 
             logger.debug("Total TLVs parsed: %d", tlv_count)
             logger.debug("=======================================")
@@ -155,34 +153,36 @@ class CDPParser:
         try:
             # Device ID (Hostname)
             if tlv_type == CDPTLVType.DEVICE_ID.value:
-                device.device_id = tlv_value.decode('ascii', errors='ignore').strip()
+                device.device_id = tlv_value.decode("ascii", errors="ignore").strip()
                 logger.debug("Device ID: %s", device.device_id)
 
             # Port ID
             elif tlv_type == CDPTLVType.PORT_ID.value:
-                device.port_id = tlv_value.decode('ascii', errors='ignore').strip()
+                device.port_id = tlv_value.decode("ascii", errors="ignore").strip()
                 logger.debug("Port ID: %s", device.port_id)
 
             # Software Version
             elif tlv_type == CDPTLVType.SOFTWARE_VERSION.value:
-                device.software_version = tlv_value.decode('ascii', errors='ignore').strip()
+                device.software_version = tlv_value.decode(
+                    "ascii", errors="ignore"
+                ).strip()
                 logger.debug("Software Version: %s...", device.software_version[:100])
 
             # Platform
             elif tlv_type == CDPTLVType.PLATFORM.value:
-                device.platform = tlv_value.decode('ascii', errors='ignore').strip()
+                device.platform = tlv_value.decode("ascii", errors="ignore").strip()
                 logger.debug("Platform: %s", device.platform)
 
             # Native VLAN (关键！)
             elif tlv_type == CDPTLVType.NATIVE_VLAN.value:
                 if len(tlv_value) >= 2:
-                    device.native_vlan = struct.unpack('>H', tlv_value[:2])[0]
+                    device.native_vlan = struct.unpack(">H", tlv_value[:2])[0]
                     logger.debug("Native VLAN: %s", device.native_vlan)
 
             # Voice VLAN
             elif tlv_type == CDPTLVType.VOICE_VLAN.value:
                 if len(tlv_value) >= 2:
-                    device.voice_vlan = struct.unpack('>H', tlv_value[:2])[0]
+                    device.voice_vlan = struct.unpack(">H", tlv_value[:2])[0]
                     logger.debug("Voice VLAN: %s", device.voice_vlan)
 
             # Capabilities
@@ -199,12 +199,12 @@ class CDPParser:
             # MTU
             elif tlv_type == CDPTLVType.MTU.value:
                 if len(tlv_value) >= 4:
-                    device.mtu = struct.unpack('>I', tlv_value[:4])[0]
+                    device.mtu = struct.unpack(">I", tlv_value[:4])[0]
                     logger.debug("MTU: %s", device.mtu)
 
             # System Name
             elif tlv_type == CDPTLVType.SYSTEM_NAME.value:
-                device.system_name = tlv_value.decode('ascii', errors='ignore').strip()
+                device.system_name = tlv_value.decode("ascii", errors="ignore").strip()
                 logger.debug("System Name: %s", device.system_name)
 
             # Management Addresses
@@ -212,29 +212,37 @@ class CDPParser:
                 addresses = self._parse_management_addresses(tlv_value)
                 if addresses:
                     device.management_addresses.extend(addresses)
-                    logger.debug("Management Addresses: %s", [addr.address for addr in addresses])
+                    logger.debug(
+                        "Management Addresses: %s", [addr.address for addr in addresses]
+                    )
 
             # Network Addresses
             elif tlv_type == CDPTLVType.ADDRESSES.value:
                 addresses = self._parse_network_addresses(tlv_value)
                 if addresses:
                     device.addresses.extend(addresses)
-                    logger.debug("Network Addresses: %s", [addr.address for addr in addresses])
+                    logger.debug(
+                        "Network Addresses: %s", [addr.address for addr in addresses]
+                    )
 
             # Physical Location
             elif tlv_type == CDPTLVType.PHYSICAL_LOCATION.value:
-                device.physical_location = tlv_value.decode('ascii', errors='ignore').strip()
+                device.physical_location = tlv_value.decode(
+                    "ascii", errors="ignore"
+                ).strip()
                 logger.debug("Physical Location: %s", device.physical_location)
 
             # Power Available
             elif tlv_type == CDPTLVType.POWER_AVAILABLE.value:
                 if len(tlv_value) >= 2:
-                    power_value = struct.unpack('>H', tlv_value[:2])[0]
+                    power_value = struct.unpack(">H", tlv_value[:2])[0]
                     device.power_available = f"{power_value} mW"
                     logger.debug("Power Available: %s", device.power_available)
 
             else:
-                logger.debug("Unknown TLV type 0x%04X: %s...", tlv_type, tlv_value.hex()[:50])
+                logger.debug(
+                    "Unknown TLV type 0x%04X: %s...", tlv_type, tlv_value.hex()[:50]
+                )
 
         except Exception as e:
             logger.debug("Error parsing TLV 0x%04X: %s", tlv_type, e, exc_info=True)
@@ -250,10 +258,10 @@ class CDPParser:
         # Type (2 bytes) + Length (2 bytes) + Capabilities (4 bytes) + Enabled Capabilities (4 bytes)
 
         # First 4 bytes: supported capabilities
-        supported = struct.unpack('>I', tlv_value[:4])[0]
+        supported = struct.unpack(">I", tlv_value[:4])[0]
 
         # Next 4 bytes: enabled capabilities (if present)
-        enabled = struct.unpack('>I', tlv_value[4:8])[0] if len(tlv_value) >= 8 else supported
+        (struct.unpack(">I", tlv_value[4:8])[0] if len(tlv_value) >= 8 else supported)
 
         # Parse capabilities bits
         caps.router = bool(supported & 0x01)
@@ -264,8 +272,12 @@ class CDPParser:
         caps.igmp_filter = bool(supported & 0x20)
         caps.repeater = bool(supported & 0x40)
 
-        logger.debug("Capabilities: Router=%s, Switch=%s, Bridge=%s",
-                     caps.router, caps.switch, caps.transparent_bridge)
+        logger.debug(
+            "Capabilities: Router=%s, Switch=%s, Bridge=%s",
+            caps.router,
+            caps.switch,
+            caps.transparent_bridge,
+        )
 
         return caps
 
@@ -291,7 +303,7 @@ class CDPParser:
 
                 # Parse IPv4
                 if addr_type == 0x01 and addr_len == 4 and offset + 5 <= len(tlv_value):
-                    ip_bytes = tlv_value[offset + 2:offset + 6]
+                    ip_bytes = tlv_value[offset + 2 : offset + 6]
                     ip_address = ".".join(map(str, ip_bytes))
                     addresses.append(CDPNetworkAddress("IPv4", ip_address))
                     logger.debug("Management IPv4: %s", ip_address)
@@ -312,7 +324,7 @@ class CDPParser:
                 return addresses
 
             # Number of addresses
-            num_addresses = struct.unpack('>I', tlv_value[:4])[0]
+            num_addresses = struct.unpack(">I", tlv_value[:4])[0]
 
             offset = 4
             for i in range(num_addresses):
@@ -325,7 +337,7 @@ class CDPParser:
 
                 # Parse IPv4
                 if addr_type == 0x01 and addr_len == 4 and offset + 5 <= len(tlv_value):
-                    ip_bytes = tlv_value[offset + 2:offset + 6]
+                    ip_bytes = tlv_value[offset + 2 : offset + 6]
                     ip_address = ".".join(map(str, ip_bytes))
                     addresses.append(CDPNetworkAddress("IPv4", ip_address))
 
