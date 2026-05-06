@@ -1483,7 +1483,8 @@ class LLDPProfessionalWindow(QWidget):
                 self.log(f"✅ 设备发现成功，立即停止捕获", "INFO")
                 self.status_label.setText(f"✅ 设备已发现: {device.get_display_name()} - 捕获完成")
                 self.progress_bar.setValue(100)  # 进度条设置为100%
-                self.stop_capture()
+                # 延迟停止底层抓包，避免在设备显示的同一个UI事件中触发完成回调重入。
+                QTimer.singleShot(250, self._stop_capture_after_device_found)
 
             #  恢复DEBUG日志处理
             if self.debug_log_timer and self.debug_enabled:
@@ -1491,6 +1492,38 @@ class LLDPProfessionalWindow(QWidget):
 
         except Exception as e:
             self.log(f"UI更新失败: {e}", "ERROR")
+            import traceback
+            traceback.print_exc()
+
+    def _stop_capture_after_device_found(self):
+        """Stop packet capture after the discovered device has been rendered."""
+        try:
+            if not self.is_capturing:
+                return
+
+            self.is_capturing = False
+
+            if hasattr(self, 'progress_timer') and self.progress_timer:
+                self.progress_timer.stop()
+
+            # Stop only the underlying capture engine. Calling listener.stop() here
+            # would synchronously emit capture_complete again and can overwrite the
+            # freshly rendered device details.
+            if self.listener and hasattr(self.listener, '_capture'):
+                self.listener._capture.stop_capture(emit_callbacks=False)
+            elif self.listener:
+                self.listener.stop()
+
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            if self.discovered_devices:
+                self.export_btn.setEnabled(True)
+
+            self.status_label.setText("捕获完成 - 可查看结果")
+            self.log("捕获已自动停止，结果保留在界面", "SUCCESS")
+
+        except Exception as e:
+            self.log(f"自动停止捕获失败: {e}", "ERROR")
             import traceback
             traceback.print_exc()
 
@@ -1519,7 +1552,14 @@ class LLDPProfessionalWindow(QWidget):
             if hasattr(self, 'progress_timer'):
                 self.progress_timer.stop()
 
-            self.capture_complete_update()
+            # 如果设备已经显示出来，不再用“完成”状态覆盖结果页。
+            if not self.discovered_devices:
+                self.capture_complete_update()
+            else:
+                self.start_btn.setEnabled(True)
+                self.stop_btn.setEnabled(False)
+                self.export_btn.setEnabled(True)
+                self.status_label.setText("捕获完成 - 可查看结果")
         except Exception as e:
             print(f"[ERROR] Capture complete UI update failed: {e}", flush=True)
             import traceback

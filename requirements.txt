@@ -8,6 +8,12 @@ PyQt6-sip>=13.6.0
 
 # Network Packet Capture
 scapy>=2.5.0
+dpkt>=1.9.8
+psutil>=5.9.0
+
+# Optional high-performance pcap backend on supported systems.
+# Windows users normally only need Npcap + Scapy fallback.
+# pcapy-ng>=1.0.0
 
 # PyInstaller for building (optional, for exe generation)
 # pyinstaller>=6.0.0

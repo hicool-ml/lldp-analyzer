@@ -9,6 +9,9 @@ __pycache__/
 build/
 dist/
 *.spec
+*.exe
+*.dmg
+*.app/
 
 # PyInstaller temporary
 *.pyc
@@ -31,6 +34,7 @@ lldp_ui_error.txt
 lldp_analyzer_crash_*.txt
 lldp_analyzer_fatal_*.txt
 lldp_session_*.txt
+auto_lldp_results_*.json
 
 # Keep requirements.txt for dependency management
 !requirements.txt
@@ -52,6 +56,9 @@ diagnose.py
 build.py
 setup.py
 LLDP_Analyzer_Portable/
+debug_*.py
+diagnostic_*.py
+fix_*.py
 
 # Virtual environment
 clean_env/

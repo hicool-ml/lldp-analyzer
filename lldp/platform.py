@@ -160,14 +160,14 @@ class PlatformConfig:
                 thunderbolt_keywords = hints.get("thunderbolt_keywords", [])
 
                 if any(kw in name or kw in desc for kw in usb_keywords + thunderbolt_keywords):
-                    print(f"[Platform] 检测到USB/Thunderbolt适配器: {iface.description} ({iface.name})")
+                    log.info("检测到USB/Thunderbolt适配器: %s (%s)", iface.description, iface.name)
                     return iface.name
 
             # 第二优先级：en1+ (通常是有线以太网)
             preferred_physical = hints.get("preferred_physical", [])
             for iface in interfaces:
                 if iface.name in preferred_physical:
-                    print(f"[Platform] 选择推荐接口: {iface.description} ({iface.name})")
+                    log.info("选择推荐接口: %s (%s)", iface.description, iface.name)
                     return iface.name
 
             # 避免en0 (通常是Wi-Fi)
@@ -247,7 +247,7 @@ class PlatformConfig:
                 import subprocess
                 result = subprocess.run(['sw_vers'], capture_output=True, text=True)
                 info["macos_version"] = result.stdout.strip()
-            except:
+            except Exception:
                 pass
 
         return info

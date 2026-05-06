@@ -6,11 +6,14 @@ Windows: pcapy-ng
 """
 
 import sys
+import logging
 import platform
 import threading
 import time
 from typing import Callable, Optional, Any
 from abc import ABC, abstractmethod
+
+log = logging.getLogger("lldp.raw_socket_capture")
 
 
 class RawSocketCapture(ABC):
@@ -82,7 +85,7 @@ class LinuxRawSocketCapture(RawSocketCapture):
                     # 尝试启用混杂模式
                     import fcntl
                     struct.pack("I", 1)  # PROMISC flag
-                except:
+                except Exception:
                     pass  # 某些系统可能不支持
 
             # 设置超时（允许定期检查stop_event）
@@ -98,10 +101,10 @@ class LinuxRawSocketCapture(RawSocketCapture):
             )
             self.capture_thread.start()
 
-            print(f"[LinuxRawSocket] 开始捕获: {self.interface}")
+            log.info("Linux raw socket capture started: %s", self.interface)
 
         except Exception as e:
-            print(f"[LinuxRawSocket] 启动失败: {e}")
+            log.exception("Linux raw socket capture failed to start: %s", e)
             raise
 
     def _capture_loop(self):
@@ -140,14 +143,14 @@ class LinuxRawSocketCapture(RawSocketCapture):
                 continue
             except Exception as e:
                 if self.is_capturing:
-                    print(f"[LinuxRawSocket] 捕获错误: {e}")
+                    log.exception("Linux raw socket capture error: %s", e)
 
     def stop_capture(self):
         """停止捕获"""
         if not self.is_capturing:
             return
 
-        print(f"[LinuxRawSocket] 停止捕获: {self.interface}")
+        log.info("Linux raw socket capture stopped: %s", self.interface)
 
         self.is_capturing = False
         self.stop_event.set()
@@ -160,7 +163,7 @@ class LinuxRawSocketCapture(RawSocketCapture):
         if self.socket:
             try:
                 self.socket.close()
-            except:
+            except Exception:
                 pass
 
 
@@ -208,16 +211,14 @@ class WindowsPcapyCapture(RawSocketCapture):
             )
             self.capture_thread.start()
 
-            print(f"[WindowsPcapy] 开始捕获: {self.interface}")
-            print(f"[WindowsPcapy] BPF过滤: {bpf_filter}")
+            log.info("Windows pcapy capture started: %s", self.interface)
+            log.debug("Windows pcapy BPF filter: %s", bpf_filter)
 
         except ImportError:
-            print("[WindowsPcapy] 缺少pcapy-ng")
-            print("  请安装: pip install pcapy-ng")
-            print("  同时确保安装了Npcap驱动")
+            log.warning("Windows pcapy capture requires pcapy-ng and Npcap")
             raise
         except Exception as e:
-            print(f"[WindowsPcapy] 启动失败: {e}")
+            log.exception("Windows pcapy capture failed to start: %s", e)
             raise
 
     def _capture_loop(self):
@@ -234,14 +235,14 @@ class WindowsPcapyCapture(RawSocketCapture):
                 self.cap.dispatch(1, _handler)
             except Exception as e:
                 if self.is_capturing:
-                    print(f"[WindowsPcapy] 捕获错误: {e}")
+                    log.exception("Windows pcapy capture error: %s", e)
 
     def stop_capture(self):
         """停止捕获"""
         if not self.is_capturing:
             return
 
-        print(f"[WindowsPcapy] 停止捕获: {self.interface}")
+        log.info("Windows pcapy capture stopped: %s", self.interface)
 
         self.is_capturing = False
         self.stop_event.set()
@@ -295,10 +296,10 @@ class MacOSPcapyCapture(RawSocketCapture):
             )
             self.capture_thread.start()
 
-            print(f"[MacOSPcapy] 开始捕获: {self.interface}")
+            log.info("macOS pcapy capture started: %s", self.interface)
 
         except Exception as e:
-            print(f"[MacOSPcapy] 启动失败: {e}")
+            log.exception("macOS pcapy capture failed to start: %s", e)
             raise
 
     def _capture_loop(self):
@@ -313,14 +314,14 @@ class MacOSPcapyCapture(RawSocketCapture):
                 self.cap.dispatch(1, _handler)
             except Exception as e:
                 if self.is_capturing:
-                    print(f"[MacOSPcapy] 捕获错误: {e}")
+                    log.exception("macOS pcapy capture error: %s", e)
 
     def stop_capture(self):
         """停止捕获"""
         if not self.is_capturing:
             return
 
-        print(f"[MacOSPcapy] 停止捕获: {self.interface}")
+        log.info("macOS pcapy capture stopped: %s", self.interface)
 
         self.is_capturing = False
         self.stop_event.set()

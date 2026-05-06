@@ -27,6 +27,8 @@ except ImportError:
 
 from .parser import LLDPParser
 from .cdp.parser import CDPParser
+from .capture_dpkt import merge_devices
+from .capture_utils import normalize_interface_name
 
 
 @dataclass
@@ -74,11 +76,8 @@ class DeviceCacheEntry:
 
     def merge_with(self, new_device) -> object:
         """🔥 融合新报文到当前设备"""
-        # TODO: 实现智能融合逻辑
-        # - 合并TLV字段
-        # - 补充缺失信息
-        # - 提升数据完整性
-        return self.device  # 简化版：直接返回原设备
+        self.device = merge_devices(self.device, new_device)
+        return self.device
 
 
 class LLDPCapture:
@@ -407,7 +406,7 @@ class LLDPCapture:
 
                             # 🔥 v3.0: 使用设备缓存机制
                             log.debug("📦 Caching device for fusion...")
-                            should_output = self._cache_device(device, str(interface))
+                            should_output = self._cache_device(device, normalize_interface_name(interface))
 
                             if should_output:
                                 # 融合完成，输出到队列
@@ -484,7 +483,7 @@ class LLDPCapture:
             # 🔥 macOS兼容性修复：处理接口名称和权限问题
             try:
                 # 尝试获取接口对象
-                iface_name = str(interface)
+                iface_name = normalize_interface_name(interface)
                 log.debug("Using interface: %s", iface_name)
 
                 # 检查接口是否有效

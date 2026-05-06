@@ -22,6 +22,52 @@ from enum import Enum
 from .utils import safe_get
 
 
+def _normalize_capabilities(caps_obj) -> Set[str]:
+    """Normalize LLDP/CDP capability models into stable semantic tokens."""
+    tokens = set()
+
+    attr_map = {
+        "router": "router",
+        "router_enabled": "router",
+        "bridge": "bridge",
+        "bridge_enabled": "bridge",
+        "switch": "bridge",
+        "wlan": "wlan",
+        "wlan_enabled": "wlan",
+        "telephone": "telephone",
+        "telephone_enabled": "telephone",
+        "repeater": "repeater",
+        "repeater_enabled": "repeater",
+        "transparent_bridge": "bridge",
+        "source_route_bridge": "bridge",
+    }
+
+    for attr, token in attr_map.items():
+        if safe_get(caps_obj, attr):
+            tokens.add(token)
+
+    if caps_obj and hasattr(caps_obj, 'get_all_capabilities'):
+        try:
+            raw_caps = caps_obj.get_all_capabilities() or []
+        except Exception:
+            raw_caps = []
+
+        for cap in raw_caps:
+            text = str(cap).lower()
+            if any(word in text for word in ["router", "路由"]):
+                tokens.add("router")
+            if any(word in text for word in ["bridge", "switch", "交换", "桥接"]):
+                tokens.add("bridge")
+            if any(word in text for word in ["wlan", "wireless", "无线"]):
+                tokens.add("wlan")
+            if any(word in text for word in ["phone", "telephone", "电话"]):
+                tokens.add("telephone")
+            if any(word in text for word in ["repeater", "中继"]):
+                tokens.add("repeater")
+
+    return tokens
+
+
 class PortRole(Enum):
     """Port roles based on network intent"""
     ACCESS_TERMINAL = "Access Terminal"        # 终端接入（PC/打印机）
@@ -143,21 +189,11 @@ def extract_features(device) -> PortFeatures:
     # 🔥 关键修复: Ruijie等厂商可能不发送Capabilities TLV
     caps_obj = safe_get(device, 'capabilities')
 
-    # 🔥 统一容错: 确保caps永远是list，绝不会是None
-    if caps_obj and hasattr(caps_obj, 'get_all_capabilities'):
-        try:
-            all_caps = caps_obj.get_all_capabilities()
-            capabilities_list = all_caps if all_caps else []
-        except:
-            capabilities_list = []
-    else:
-        capabilities_list = []
-
-    # 🔥 安全的特征提取: 基于list而不是对象
-    features.is_router = "Router" in capabilities_list
-    features.is_bridge = "Bridge" in capabilities_list
-    features.is_wlan = "WLAN" in capabilities_list or "Wlan" in capabilities_list
-    features.is_repeater = "Repeater" in capabilities_list
+    capability_tokens = _normalize_capabilities(caps_obj)
+    features.is_router = "router" in capability_tokens
+    features.is_bridge = "bridge" in capability_tokens
+    features.is_wlan = "wlan" in capability_tokens
+    features.is_repeater = "repeater" in capability_tokens
 
     # ========== VLAN特征提取 ==========
     port_vlan = safe_get(device, 'port_vlan')
@@ -394,10 +430,10 @@ DEVTYPE_RULES = [
     InferenceRule(
         rule_id=RuleID.RULE_DEVTYPE_POE_NOWLAN,
         name="PoE+无无线=电话",
-        priority=1,
-        condition_fn=lambda f: f.has_poe and not f.is_wlan,
+        priority=2,
+        condition_fn=lambda f: f.has_poe and not f.is_wlan and not f.is_bridge and not f.is_router and not f.has_management_ip,
         action_fn=lambda f: DeviceType.IP_PHONE,
-        description="PoE+无无线 → IP电话"
+        description="PoE+无无线+无网络设备特征 → IP电话"
     ),
     InferenceRule(
         rule_id=RuleID.RULE_DEVTYPE_ROUTER,
@@ -457,7 +493,7 @@ def infer_device_type(features: PortFeatures, device) -> DeviceType:
     🔥 优化：利用Management Address TLV提升精度
     """
     # 按优先级执行规则
-    for rule in DEVTYPE_RULES:
+    for rule in sorted(DEVTYPE_RULES, key=lambda item: item.priority):
         if rule.condition_fn(features):
             return rule.action_fn(features)
 
@@ -471,7 +507,7 @@ def run_priority_rules(features: PortFeatures, device_type: DeviceType) -> tuple
 
     返回: (PortRole, RuleID)
     """
-    for rule in PRIORITY_RULES:
+    for rule in sorted(PRIORITY_RULES, key=lambda item: item.priority):
         if rule.condition_fn(features, device_type):
             return rule.action_fn(features, device_type), rule.rule_id
 
@@ -484,7 +520,7 @@ def run_secondary_inference(features: PortFeatures, device_type: DeviceType) -> 
 
     返回: (PortRole, RuleID)
     """
-    for rule in SECONDARY_RULES:
+    for rule in sorted(SECONDARY_RULES, key=lambda item: item.priority):
         if rule.condition_fn(features, device_type):
             return rule.action_fn(features, device_type), rule.rule_id
 
@@ -493,6 +529,64 @@ def run_secondary_inference(features: PortFeatures, device_type: DeviceType) -> 
         return PortRole.ACCESS_TERMINAL, RuleID.RULE_PORT_VLAN_ONLY
     else:
         return PortRole.UNKNOWN, RuleID.RULE_PORT_VLAN_ONLY
+
+
+BASE_CONFIDENCE_BY_ROLE = {
+    PortRole.ACCESS_TERMINAL: 70,
+    PortRole.ACCESS_WIRELESS: 82,
+    PortRole.ACCESS_VOICE: 80,
+    PortRole.TRUNK_NATIVE: 84,
+    PortRole.TRUNK_NO_NATIVE: 82,
+    PortRole.UPLINK_LAG: 88,
+    PortRole.UPLINK_SINGLE: 78,
+    PortRole.CORE_DISTRIBUTION: 84,
+    PortRole.STORAGE_NETWORK: 84,
+    PortRole.INFRASTRUCTURE: 76,
+    PortRole.UNKNOWN: 20,
+}
+
+
+STRONG_RULE_BONUS = {
+    RuleID.RULE_AGGREGATION: 7,
+    RuleID.RULE_PROTOCOL_VLAN: 6,
+    RuleID.RULE_HIGH_MTU_SPEED: 6,
+    RuleID.RULE_ROUTER_CAPABILITY: 5,
+    RuleID.RULE_DEVTYPE_AP: 8,
+    RuleID.RULE_DEVTYPE_PHONE: 8,
+    RuleID.RULE_DEVTYPE_SWITCH: 6,
+}
+
+
+def calculate_confidence(role: PortRole, device_type: DeviceType, features: PortFeatures, rule_ids: Set[RuleID]) -> int:
+    """Calculate confidence from role quality, strong rules, and supporting TLVs."""
+    confidence = BASE_CONFIDENCE_BY_ROLE.get(role, 50)
+
+    for rule_id in rule_ids:
+        confidence += STRONG_RULE_BONUS.get(rule_id, 3)
+
+    supporting_features = [
+        features.has_port_vlan,
+        features.has_protocol_vlan,
+        features.is_aggregated,
+        features.high_mtu,
+        features.has_poe,
+        features.is_router,
+        features.is_bridge,
+        features.is_wlan,
+        features.speed_1g_plus,
+        features.speed_10g_plus,
+        features.has_management_ip,
+        features.has_system_description,
+    ]
+    confidence += min(8, sum(1 for item in supporting_features if item) * 2)
+
+    if device_type in {DeviceType.UNKNOWN, DeviceType.TERMINAL} and role != PortRole.ACCESS_TERMINAL:
+        confidence -= 8
+
+    if role == PortRole.UNKNOWN:
+        confidence = min(confidence, 35)
+
+    return max(0, min(98, confidence))
 
 
 def infer_port_intent(device) -> PortIntentProfile:
@@ -529,8 +623,7 @@ def infer_port_intent(device) -> PortIntentProfile:
         rule_ids.add(secondary_rule_id)
 
     # ========== 🔥 动态置信度计算 ==========
-    # confidence = len(reasons) * 15
-    confidence = min(98, len(rule_ids) * 15)
+    confidence = calculate_confidence(final_role, device_type, features, rule_ids)
 
     # ========== 生成运维洞察和建议 ==========
     insight, suggestion = generate_insight_and_suggestion(final_role, device_type, features, rule_ids)

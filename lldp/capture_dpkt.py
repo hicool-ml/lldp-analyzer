@@ -12,6 +12,7 @@ import logging
 import queue
 import time
 import threading
+from dataclasses import dataclass, is_dataclass
 from typing import Optional, Callable, List
 
 log = logging.getLogger("lldp.capture_dpkt")
@@ -41,6 +42,7 @@ except Exception:
 from .parser import LLDPParser
 from .cdp.parser import CDPParser
 from .capture_backends import choose_backend, BaseBackend
+from .capture_utils import describe_interface, normalize_interface_name
 
 #  新增：无Scapy的Raw Socket引擎
 try:
@@ -51,11 +53,54 @@ except Exception:
     log.debug("Raw socket engine not available (will use Scapy fallback)")
 
 
+@dataclass
 class CaptureResult:
-    def __init__(self, device, timestamp: float, interface: str):
-        self.device = device
-        self.timestamp = timestamp
-        self.interface = interface
+    device: object
+    timestamp: float
+    interface: str
+
+
+def _is_meaningful(value) -> bool:
+    if value is None:
+        return False
+    if value == "":
+        return False
+    if value == [] or value == {}:
+        return False
+    if is_dataclass(value):
+        return any(_is_meaningful(item) for item in vars(value).values())
+    return True
+
+
+def merge_devices(base, new):
+    """Merge later packet fields into the cached device without changing identity."""
+    for key, value in vars(new).items():
+        if key == "last_seen":
+            setattr(base, key, value)
+            continue
+
+        current = getattr(base, key, None)
+        if isinstance(current, list) and isinstance(value, list):
+            seen = {repr(item) for item in current}
+            for item in value:
+                marker = repr(item)
+                if marker not in seen:
+                    current.append(item)
+                    seen.add(marker)
+            continue
+
+        if is_dataclass(current) and is_dataclass(value) and type(current) is type(value):
+            merge_devices(current, value)
+            continue
+
+        if current is False and value is True:
+            setattr(base, key, value)
+            continue
+
+        if not _is_meaningful(current) and _is_meaningful(value):
+            setattr(base, key, value)
+
+    return base
 
 
 class HybridCapture:
@@ -72,6 +117,10 @@ class HybridCapture:
         # backend instance (set in start_capture)
         self.backend: Optional[BaseBackend] = None
         self._current_callback: Optional[Callable] = None
+        self._device_cache = {}
+        self._cache_lock = threading.Lock()
+        self._active_interface_name = "unknown"
+        self._active_interface_desc = "unknown"
 
         #  运行指标（可观测性）
         self.metrics = {
@@ -139,6 +188,10 @@ class HybridCapture:
             self.metrics[key] = 0
 
         self._current_callback = callback
+        with self._cache_lock:
+            self._device_cache.clear()
+        self._active_interface_name = normalize_interface_name(interface)
+        self._active_interface_desc = describe_interface(interface)
 
         # 使用log.warning确保UI能够捕获并显示
         log.warning("[CAPTURE] Engine selection started...")
@@ -152,7 +205,7 @@ class HybridCapture:
 
                 # 创建Raw Socket引擎
                 self.raw_socket_engine = create_capture_engine(
-                    interface,
+                    self._active_interface_name,
                     self._raw_socket_callback,
                     promisc=True
                 )
@@ -177,13 +230,13 @@ class HybridCapture:
 
         #  第二优先级：现有的lightweight backend (pcapy/AF_PACKET + dpkt)
         log.warning("[CAPTURE] [2/3] Trying Lightweight Backend...")
-        backend = choose_backend(interface)
+        backend = choose_backend(self._active_interface_name)
         if backend is not None:
             try:
                 log.warning(f"[CAPTURE] Backend created: {backend.__class__.__name__}")
                 self.backend = backend
                 self.backend.open(bpf_filter="ether proto 0x88cc or ether host 01:00:0c:cc:cc:cc")
-                log.warning(f"[CAPTURE] Using Lightweight Backend: {interface}")
+                log.warning(f"[CAPTURE] Using Lightweight Backend: {self._active_interface_desc} ({self._active_interface_name})")
 
                 self.is_capturing = True
                 self.capture_thread = threading.Thread(target=self._backend_worker, args=(duration,), daemon=True)
@@ -197,7 +250,7 @@ class HybridCapture:
 
         #  最后的fallback：Scapy
         if HAS_SCAPY:
-            log.warning(f"[CAPTURE] [3/3] Using Scapy Fallback: {interface}")
+            log.warning(f"[CAPTURE] [3/3] Using Scapy Fallback: {self._active_interface_desc} ({self._active_interface_name})")
             log.warning("[CAPTURE] Scapy mode has lower performance, Npcap recommended")
             log.warning("[CAPTURE] Starting Scapy worker thread...")
             self.is_capturing = True
@@ -231,6 +284,32 @@ class HybridCapture:
 """
         raise RuntimeError(error_msg)
 
+    @staticmethod
+    def _device_key(device) -> str:
+        chassis_id = getattr(device, "chassis_id", None)
+        if chassis_id:
+            return f"chassis:{getattr(chassis_id, 'value', chassis_id)}"
+
+        device_id = getattr(device, "device_id", None)
+        if device_id:
+            return f"cdp:{device_id}"
+
+        system_name = getattr(device, "system_name", None)
+        if system_name:
+            return f"name:{system_name}"
+
+        return f"unknown:{id(device)}"
+
+    def _merge_or_cache_device(self, device):
+        key = self._device_key(device)
+        with self._cache_lock:
+            cached = self._device_cache.get(key)
+            if cached is None:
+                self._device_cache[key] = device
+                return device
+
+            return merge_devices(cached, device)
+
     def _handle_dpkt_eth(self, eth):
         """Common handler for dpkt.ethernet.Ethernet frames"""
         self.metrics["rx_packets"] += 1
@@ -252,7 +331,8 @@ class HybridCapture:
 
             if device and device.is_valid():
                 self.metrics["parsed"] += 1
-                device.capture_interface = getattr(self.backend, 'interface', 'unknown')
+                device = self._merge_or_cache_device(device)
+                device.capture_interface = getattr(self.backend, 'interface', self._active_interface_name)
                 # 🔧 避免覆盖解析器已设置的protocol字段
                 if not getattr(device, 'protocol', None):
                     device.protocol = protocol
@@ -299,13 +379,8 @@ class HybridCapture:
         from scapy.all import sniff, Ether
         import sys
 
-        #  处理接口参数（可能是NetworkInterface对象或字符串）
-        if hasattr(interface, 'name'):
-            iface_name = interface.name
-            iface_desc = interface.description if hasattr(interface, 'description') else interface.name
-        else:
-            iface_name = str(interface)
-            iface_desc = str(interface)
+        iface_name = normalize_interface_name(interface)
+        iface_desc = describe_interface(interface)
 
         log.warning(f"[SCAPY] Scapy mode starting: {iface_desc}")
         log.warning(f"[SCAPY] Interface name: {iface_name}")
@@ -338,6 +413,7 @@ class HybridCapture:
                 if device and device.is_valid():
                     self.metrics["parsed"] += 1
                     log.warning(f"[SCAPY] Parsed successfully #{self.metrics['parsed']}: {device.system_name}")
+                    device = self._merge_or_cache_device(device)
                     device.capture_interface = iface_desc
                     #  修复：使用解析器设置的协议，不要覆盖
                     # 如果解析器已经设置了protocol，使用它；否则基于设备类型推断
@@ -410,7 +486,7 @@ class HybridCapture:
         finally:
             self.is_capturing = False
 
-    def stop_capture(self):
+    def stop_capture(self, emit_callbacks: bool = True):
         """停止捕获并强制刷新缓存中的设备"""
         self.is_capturing = False
 
@@ -439,17 +515,17 @@ class HybridCapture:
         log.info(" 强制刷新设备缓存...")
         flushed_devices = self.get_discovered_devices()
 
-        # 🔥 修复假死：不直接调用回调，避免阻塞UI线程
-        # 设备已经在捕获过程中通过回调发送到UI了，这里不需要再次触发
         if flushed_devices:
-            log.info(f"📊 缓存中有 {len(flushed_devices)} 个设备（已在捕获时发送到UI）")
-            # 不再调用callback，避免重复UI更新和线程阻塞
+            log.info("缓存中有 %d 个设备", len(flushed_devices))
+            if emit_callbacks and self._current_callback:
+                for result in flushed_devices:
+                    self._safe_callback(self._current_callback, result.device)
 
         # 🔧 防止重复提交：清理callback引用
         self._current_callback = None
 
         #  打印运行指标
-        log.info(" Capture metrics: rx_packets=%d, parsed=%d, parse_errors=%d, callbacks=%d, filtered=%d",
+        log.info("📊 Capture metrics: rx_packets=%d, parsed=%d, parse_errors=%d, callbacks=%d, filtered=%d",
                  self.metrics["rx_packets"], self.metrics["parsed"],
                  self.metrics["parse_errors"], self.metrics["callbacks"],
                  self.metrics["filtered"])
@@ -458,7 +534,7 @@ class HybridCapture:
         # 线程会在daemon=True时随主进程退出，或在自己的超时后退出
         if self.capture_thread and self.capture_thread.is_alive():
             log.warning("Capture thread is still running (will exit naturally)")
-            # 不调用join()，避免阻塞UI线程
+            # Do not wait here; the daemon capture thread will exit naturally.
 
     def shutdown(self):
         """Shutdown capture and release all resources."""

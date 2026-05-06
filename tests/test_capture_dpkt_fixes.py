@@ -22,47 +22,36 @@ pytestmark = pytest.mark.skipif(not HAS_SCAPY, reason="Scapy not available")
 
 
 class TestScapyRequirement:
-    """测试1：Scapy 缺失检查"""
+    """测试1：Hybrid backend selection behavior"""
 
     def test_requires_scapy_in_init(self):
-        """验证 __init__ 在没有 Scapy 时抛出 RuntimeError"""
-        # 模拟 HAS_SCAPY = False
+        """HybridCapture can be constructed without Scapy for dpkt/raw backends."""
         with patch('lldp.capture_dpkt.HAS_SCAPY', False):
-            with pytest.raises(RuntimeError) as exc_info:
-                HybridCapture()
-
-            # 验证错误消息包含提示
-            assert "Scapy is required" in str(exc_info.value)
-            assert "dpkt-only capture is not yet implemented" in str(exc_info.value)
+            capture = HybridCapture()
+            assert capture is not None
 
     def test_requires_scapy_in_start_capture(self):
-        """验证 start_capture 在没有 Scapy 时抛出 RuntimeError（防御性检查）"""
-        # 这个测试是防御性的，因为 __init__ 已经会检查
-        # 但如果有人绕过 __init__ 直接调用，仍然会失败
+        """When all engines are unavailable, the error explains capture startup failure."""
         capture = HybridCapture()
         interface = "eth0"
 
-        # 模拟 HAS_SCAPY = False
-        with patch('lldp.capture_dpkt.HAS_SCAPY', False):
+        with patch('lldp.capture_dpkt.HAS_SCAPY', False), \
+             patch('lldp.capture_dpkt.HAS_RAW_SOCKET', False), \
+             patch('lldp.capture_dpkt.choose_backend', return_value=None):
             with pytest.raises(RuntimeError) as exc_info:
                 capture.start_capture(interface, duration=1)
 
-            # 验证错误消息包含提示
-            assert "Scapy is required" in str(exc_info.value)
+            assert "无法启动网络捕获" in str(exc_info.value)
 
     def test_async_sniffer_imported(self):
-        """验证使用 AsyncSniffer 而不是 sniff"""
+        """HybridCapture includes Scapy as the final fallback path."""
         import inspect
         from lldp import capture_dpkt
 
         source = inspect.getsource(capture_dpkt)
 
-        # 应该导入 AsyncSniffer
-        assert 'AsyncSniffer' in source, "应该导入 AsyncSniffer"
-
-        # 应该使用 AsyncSniffer 而不是 sniff
-        assert 'AsyncSniffer(' in source, "应该使用 AsyncSniffer"
-        assert source.count('sniff(') == 0, "不应该使用 sniff"
+        assert 'def _scapy_worker' in source
+        assert 'sniff(' in source
 
 
 class TestLoggerUsage:
@@ -142,13 +131,11 @@ class TestStopCaptureTimeout:
     """测试6：stop_capture 超时优化"""
 
     def test_stop_capture_increased_timeout(self):
-        """验证 stop_capture 的超时时间增加到5秒"""
+        """stop_capture should not block the UI waiting for daemon capture threads."""
         import inspect
         source = inspect.getsource(HybridCapture.stop_capture)
 
-        # 验证超时时间从2秒改为5秒
-        assert 'join(timeout=5)' in source, \
-            "stop_capture 的超时时间应该是5秒"
+        assert 'join(' not in source
 
     def test_shutdown_method_exists(self):
         """验证 shutdown 方法存在"""
@@ -162,22 +149,10 @@ class TestNoDuplicateNonlocal:
     """测试7：重复 nonlocal 声明移除"""
 
     def test_no_duplicate_nonlocal(self):
-        """验证没有重复的 nonlocal 声明"""
+        """HybridCapture no longer uses nested nonlocal packet counters."""
         import inspect
-        source = inspect.getsource(HybridCapture._capture_worker)
-
-        # 检查是否在 packet_handler 开头统一声明
-        # 应该有：nonlocal packet_count, device_found
-        assert 'nonlocal packet_count, device_found' in source, \
-            "应该在 packet_handler 开头统一声明 nonlocal"
-
-        # 统计 nonlocal 声明次数（应该只有一次）
-        lines = source.split('\n')
-        nonlocal_count = sum(1 for line in lines if 'nonlocal' in line)
-
-        # 应该只有一行 nonlocal 声明
-        assert nonlocal_count == 1, \
-            f"nonlocal 应该只声明一次，发现 {nonlocal_count} 次"
+        source = inspect.getsource(HybridCapture)
+        assert 'nonlocal' not in source
 
 
 class TestCaptureResultTyping:

@@ -31,6 +31,8 @@ except Exception:
 
 import socket
 
+from .capture_utils import normalize_interface_name
+
 
 class BaseBackend:
     """Backend interface"""
@@ -61,7 +63,7 @@ class PCAPBackend(BaseBackend):
         if not HAS_DPKT:
             raise RuntimeError("dpkt is required for PCAPBackend")
 
-        self.interface = interface
+        self.interface = normalize_interface_name(interface)
         self.snaplen = snaplen
         self.promisc = promisc
         self.timeout_ms = timeout_ms
@@ -144,7 +146,7 @@ class AFPacketBackend(BaseBackend):
         if not HAS_DPKT:
             raise RuntimeError("dpkt is required for AFPacketBackend")
 
-        self.interface = interface
+        self.interface = normalize_interface_name(interface)
         self.timeout = float(timeout)
         self.sock = None
         self._stop = False

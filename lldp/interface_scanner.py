@@ -5,9 +5,12 @@
 """
 
 import sys
+import logging
 import platform
 from typing import List, Optional, NamedTuple
 from dataclasses import dataclass
+
+log = logging.getLogger("lldp.interface_scanner")
 
 class NetworkInterface(NamedTuple):
     """网络接口信息（兼容scapy接口对象）"""
@@ -41,10 +44,10 @@ class InterfaceScanner:
             elif self.os_type == "darwin":
                 return self._scan_macos()
             else:
-                print(f"[InterfaceScanner] 不支持的平台: {self.os_type}")
+                log.warning("不支持的平台: %s", self.os_type)
                 return []
         except Exception as e:
-            print(f"[InterfaceScanner] 扫描失败: {e}")
+            log.exception("扫描失败: %s", e)
             return []
 
     def _scan_windows(self) -> List[NetworkInterface]:
@@ -107,11 +110,47 @@ class InterfaceScanner:
                     )
                     interfaces.append(interface)
 
+            if not interfaces:
+                log.info("pcapy未返回可用接口，改用Scapy/Npcap扫描")
+                interfaces = self._scan_windows_scapy()
+
         except ImportError as e:
-            print(f"[InterfaceScanner] 缺少依赖: {e}")
-            print("  请安装: pip install pcapy-ng psutil")
+            log.info("pcapy/psutil扫描不可用: %s; 改用Scapy/Npcap扫描", e)
+            interfaces = self._scan_windows_scapy()
         except Exception as e:
-            print(f"[InterfaceScanner] Windows扫描失败: {e}")
+            log.exception("Windows扫描失败: %s", e)
+            interfaces = self._scan_windows_scapy()
+
+        return interfaces
+
+    def _scan_windows_scapy(self) -> List[NetworkInterface]:
+        """Windows fallback: enumerate Npcap interfaces through Scapy."""
+        interfaces = []
+
+        try:
+            from scapy.all import get_working_ifaces
+
+            for iface in get_working_ifaces():
+                # Scapy's network_name is the Npcap device path accepted by sniff().
+                capture_name = getattr(iface, "network_name", None) or str(iface)
+                friendly_name = getattr(iface, "name", "") or capture_name
+                description = getattr(iface, "description", "") or friendly_name
+                display_desc = f"{friendly_name} - {description}" if friendly_name not in description else description
+
+                if not self._should_include_interface(capture_name, display_desc):
+                    continue
+
+                interfaces.append(NetworkInterface(
+                    name=str(capture_name),
+                    description=str(display_desc),
+                    mac=getattr(iface, "mac", None),
+                    ips=[]
+                ))
+
+        except ImportError as e:
+            log.warning("Scapy不可用，无法通过Npcap扫描接口: %s", e)
+        except Exception as e:
+            log.exception("Scapy/Npcap接口扫描失败: %s", e)
 
         return interfaces
 
@@ -149,7 +188,7 @@ class InterfaceScanner:
                     s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                     info = fcntl.ioctl(s.fileno(), 0x8927, struct.pack('256s', if_name.encode()[:15]))
                     s.close()
-                except:
+                except Exception:
                     info = if_name
 
                 interface = NetworkInterface(
@@ -161,10 +200,9 @@ class InterfaceScanner:
                 interfaces.append(interface)
 
         except ImportError as e:
-            print(f"[InterfaceScanner] 缺少依赖: {e}")
-            print("  请安装: pip install psutil")
+            log.warning("缺少依赖: %s; 请安装: pip install psutil", e)
         except Exception as e:
-            print(f"[InterfaceScanner] Linux扫描失败: {e}")
+            log.exception("Linux扫描失败: %s", e)
 
         return interfaces
 
@@ -208,10 +246,9 @@ class InterfaceScanner:
                 interfaces.append(interface)
 
         except ImportError as e:
-            print(f"[InterfaceScanner] 缺少依赖: {e}")
-            print("  请安装: pip install psutil")
+            log.warning("缺少依赖: %s; 请安装: pip install psutil", e)
         except Exception as e:
-            print(f"[InterfaceScanner] macOS扫描失败: {e}")
+            log.exception("macOS扫描失败: %s", e)
 
         return interfaces
 
@@ -220,7 +257,7 @@ class InterfaceScanner:
         检查接口名是否匹配GUID
 
         这是一个简化版本，实际应该查询注册表
-        HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Control\Network\{4D36E972-E325-11CE-BFC1-08002BE10318}\{guid}\Connection
+        HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Network\\{4D36E972-E325-11CE-BFC1-08002BE10318}\\{guid}\\Connection
         """
         # 简化处理：如果if_name包含数字或特定特征，认为匹配
         # 实际应该通过注册表查询
